@@ -391,6 +391,17 @@ tbody tr:hover { transform: translateX(2px); }
 .month-event { overflow: hidden; border-left: 3px solid; border-radius: 5px; padding: 3px 5px; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .month-free { margin-top: 8px; color: #9aa59f; font-size: 10px; }
 
+.day-calendar { background: #e4ebe7; }
+.day-calendar-head { display: grid; gap: 2px; padding: 18px; background: linear-gradient(135deg, #f4faf7, #fff); border-bottom: 1px solid #dfe8e3; }
+.day-calendar-head span { color: #087052; font-size: 13px; font-weight: 700; }
+.day-calendar-head strong { font-size: 20px; }
+.day-calendar-head small { color: #7b8881; }
+.day-row { display: grid; grid-template-columns: 66px 1fr; gap: 1px; min-height: 66px; border-bottom: 1px solid #e4ebe7; }
+.day-time { display: grid; place-items: start center; padding-top: 12px; background: #fbfcfb; color: #748179; font-size: 12px; font-weight: 600; }
+.day-slot { min-width: 0; padding: 6px; background: white; text-align: left; }
+.day-slot:active { background: #eff8f3; }
+.day-free { display: flex; height: 100%; align-items: center; justify-content: center; gap: 5px; border: 1px dashed #c9d9d1; border-radius: 10px; color: #789086; font-size: 12px; }
+
 @keyframes rise-in {
   from { opacity: 0; transform: translateY(16px) scale(.992); }
   to { opacity: 1; transform: translateY(0) scale(1); }
@@ -417,6 +428,49 @@ tbody tr:hover { transform: translateX(2px); }
 }
 
 @media (max-width: 767px) {
+  .clinic-main { padding-bottom: calc(78px + env(safe-area-inset-bottom)); }
+  .clinic-topbar { height: 64px; gap: 6px; padding-inline: 10px; }
+  .clinic-topbar input { height: 42px; font-size: 13px; }
+  .clinic-content { padding: 16px 12px 22px; }
+  .page-heading { margin-bottom: 20px; align-items: flex-start; }
+  .page-heading h1 { font-size: 30px; line-height: 1.05; }
+  .page-heading > div:last-child { display: grid; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .page-heading > div:last-child > * { width: 100%; min-height: 44px; }
+  .mobile-dialog {
+    inset: 0 !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    max-width: none !important;
+    height: 100dvh !important;
+    max-height: none !important;
+    transform: none !important;
+    border-radius: 0 !important;
+    padding: 22px 18px calc(22px + env(safe-area-inset-bottom)) !important;
+  }
+  .mobile-dialog input, .mobile-dialog select { min-height: 48px; }
+  .mobile-dialog textarea { min-height: 110px; }
+  .mobile-dialog form > div:last-child { position: sticky; bottom: calc(-22px - env(safe-area-inset-bottom)); margin: 8px -18px calc(-22px - env(safe-area-inset-bottom)); padding: 12px 18px calc(12px + env(safe-area-inset-bottom)); background: rgba(255,255,255,.96); border-top: 1px solid #e0e8e3; backdrop-filter: blur(16px); }
+  .mobile-dialog form > div:last-child button { min-height: 46px; flex: 1; }
+  .agenda-hero { padding: 18px 16px; border-radius: 22px; }
+  .agenda-hero h2 { max-width: 235px; font-size: 21px; }
+  .agenda-hero > div:first-child > button { width: 100%; min-height: 46px; }
+  .day-row { grid-template-columns: 58px 1fr; }
+  .day-time { font-size: 11px; }
+  .day-slot { min-height: 64px; }
+  .calendar-event { padding: 9px; }
+  .calendar-event strong { font-size: 12px; }
+  .calendar-event small { font-size: 10px; }
+  .premium-card { border-radius: 20px; }
+  .clinic-app table { display: block; min-width: 0 !important; }
+  .clinic-app table thead { display: none; }
+  .clinic-app table tbody { display: grid; gap: 10px; padding: 12px; }
+  .clinic-app table tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; padding: 14px; border: 1px solid #e1e9e4; border-radius: 16px; background: #fff; box-shadow: 0 7px 18px rgba(28,76,57,.05); }
+  .clinic-app table tbody td { padding: 0 !important; text-align: left !important; }
+  .clinic-app table tbody td:first-child { grid-column: 1 / -1; padding-bottom: 9px !important; border-bottom: 1px solid #edf1ee; }
+  .clinic-app table tbody td:nth-child(2) { grid-column: 1 / -1; color: #65766d; }
+  .clinic-app table tbody td:last-child { display: none; }
+  [data-slot="dialog-close"] { top: 16px; right: 16px; }
   .premium-card:hover { transform: translateY(-2px); }
   .clinic-main::before { right: -80px; width: 150px; height: 150px; }
   .login-card { transform: none; }
@@ -424,6 +478,12 @@ tbody tr:hover { transform: translateX(2px); }
   .weekly-calendar { grid-template-columns: 62px repeat(7, 122px); }
   .calendar-corner, .calendar-day-head { min-height: 68px; }
   .month-day { min-height: 105px; }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .clinic-main { padding-bottom: calc(82px + env(safe-area-inset-bottom)); }
+  .clinic-content { max-width: 920px; padding: 24px; }
+  .mobile-bottom-nav { left: 50%; width: min(720px, calc(100% - 32px)); transform: translateX(-50%); border: 1px solid #dce6e0; border-bottom: 0; border-radius: 22px 22px 0 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
