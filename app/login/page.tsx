@@ -35,12 +35,12 @@ export default function LoginPage() {
     <div className="pointer-events-none absolute -left-32 -top-32 size-[420px] rounded-full bg-[#bad9c8]/35 blur-3xl" />
     <div className="pointer-events-none absolute -bottom-40 right-1/3 size-[480px] rounded-full bg-[#e7d69f]/20 blur-3xl" />
 
-    <section className="relative hidden min-h-screen overflow-hidden bg-gradient-to-br from-[#053b2f] via-[#07533f] to-[#0b7257] p-12 text-white lg:flex lg:flex-col lg:justify-between xl:p-16">
+    <section className="login-visual relative hidden min-h-screen overflow-hidden bg-gradient-to-br from-[#053b2f] via-[#07533f] to-[#0b7257] p-12 text-white lg:flex lg:flex-col lg:justify-between xl:p-16">
       <div className="absolute inset-0 opacity-30 login-pattern" />
       <div className="absolute -right-24 top-20 size-80 rounded-full border border-white/10" />
       <div className="absolute -right-5 top-40 size-56 rounded-full border border-white/10" />
       <div className="relative flex items-center gap-3">
-        <span className="grid size-12 place-items-center rounded-2xl border border-white/20 bg-white/10 shadow-xl shadow-black/10 backdrop-blur"><Sparkles className="text-[#ead9a5]" /></span>
+        <span className="brand-mark grid size-12 place-items-center rounded-2xl border border-white/20 bg-white/10 shadow-xl shadow-black/10 backdrop-blur"><Sparkles className="text-[#ead9a5]" /></span>
         <div><p className="font-serif text-2xl font-semibold">Clínica Essência</p><p className="text-sm text-white/55">Cuidado em cada sessão</p></div>
       </div>
       <div className="relative max-w-xl">
@@ -55,8 +55,8 @@ export default function LoginPage() {
     <section className="relative flex min-h-screen items-center justify-center px-5 py-10 sm:px-10">
       <div className="w-full max-w-[470px]">
         <div className="mb-9 flex items-center gap-3 lg:hidden"><span className="grid size-11 place-items-center rounded-2xl bg-[#07533f] text-[#ead9a5]"><Sparkles /></span><div><p className="font-serif text-xl font-semibold text-[#17352b]">Clínica Essência</p><p className="text-xs text-[#718078]">Cuidado em cada sessão</p></div></div>
-        <div className="rounded-[30px] border border-white/80 bg-white/85 p-7 shadow-[0_30px_80px_rgba(20,65,48,.12)] backdrop-blur-xl sm:p-10">
-          <span className="mb-7 grid size-14 place-items-center rounded-2xl bg-[#e7f3ec] text-[#07533f]"><LockKeyhole className="size-6" /></span>
+        <div className="login-card rounded-[30px] border border-white/80 bg-white/85 p-7 shadow-[0_30px_80px_rgba(20,65,48,.12)] backdrop-blur-xl sm:p-10">
+          <span className="login-lock mb-7 grid size-14 place-items-center rounded-2xl bg-[#e7f3ec] text-[#07533f]"><LockKeyhole className="size-6" /></span>
           <p className="text-sm font-semibold uppercase tracking-[.18em] text-[#9b7b3f]">Área exclusiva</p>
           <h2 className="mt-2 font-serif text-4xl font-semibold text-[#17352b]">Bem-vinda, Dra. Maria Carolini</h2>
           <p className="mt-3 leading-relaxed text-[#718078]">Entre com seus dados para acessar o painel da clínica.</p>
