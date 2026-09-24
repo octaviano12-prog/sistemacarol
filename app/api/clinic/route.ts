@@ -8,6 +8,17 @@ export const dynamic = "force-dynamic";
 type IdRow = RowDataPacket & { id: number };
 const today = () => new Date().toISOString().slice(0, 10);
 const ownerFrom = (request: Request) => request.headers.get("x-clinic-owner") || process.env.CLINIC_OWNER_ID || "clinica-essencia";
+function addWeeksToSqlDateTime(value: string, weeks: number) {
+  const [date, time = "00:00"] = value.split(" ");
+  const result = new Date(`${date}T12:00:00Z`);
+  result.setUTCDate(result.getUTCDate() + weeks * 7);
+  return `${result.toISOString().slice(0, 10)} ${time}`;
+}
+function appointmentDateTimeBR(value: string) {
+  const [date, time = ""] = value.split(" ");
+  const [year, month, day] = date.split("-");
+  return `${day}/${month}/${year}${time ? ` às ${time.slice(0, 5)}` : ""}`;
+}
 function validProfilePhoto(value: unknown) {
   const photo = String(value || "");
   if (!photo) return null;
@@ -160,13 +171,32 @@ export async function POST(request: Request) {
     } else if (action === "appointment.create") {
       const patientId = Number(body.patientId); const scheduledAt = String(body.scheduledAt || "").replace("T", " ");
       if (!patientId || !scheduledAt) return Response.json({ error: "Escolha o paciente e a data." }, { status: 400 });
-      const durationMinutes = Math.max(10, Number(body.durationMinutes || 50));
-      const conflicts = await rows<RowDataPacket[]>(`SELECT id FROM appointments
-        WHERE owner_id = ? AND status NOT IN ('Cancelado', 'Faltou')
-        AND scheduled_at < DATE_ADD(?, INTERVAL ? MINUTE)
-        AND DATE_ADD(scheduled_at, INTERVAL duration_minutes MINUTE) > ? LIMIT 1`, [ownerId, scheduledAt, durationMinutes, scheduledAt]);
-      if (conflicts.length) return Response.json({ error: "Este horário já está ocupado. Escolha um horário livre na agenda." }, { status: 409 });
-      await pool.execute("INSERT INTO appointments (owner_id, patient_id, scheduled_at, duration_minutes, notes) VALUES (?, ?, ?, ?, ?)", [ownerId, patientId, scheduledAt, durationMinutes, String(body.notes || "")]);
+      const requestedDuration = Number(body.durationMinutes || 50);
+      const requestedRepeatWeeks = Number(body.repeatWeeks || 1);
+      const durationMinutes = Number.isFinite(requestedDuration) ? Math.min(720, Math.max(10, Math.trunc(requestedDuration))) : 50;
+      const repeatWeeks = Number.isFinite(requestedRepeatWeeks) ? Math.min(52, Math.max(1, Math.trunc(requestedRepeatWeeks))) : 1;
+      const occurrences = Array.from({ length: repeatWeeks }, (_, index) => addWeeksToSqlDateTime(scheduledAt, index));
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        for (const occurrence of occurrences) {
+          const [conflicts] = await connection.execute<RowDataPacket[]>(`SELECT id FROM appointments
+            WHERE owner_id = ? AND status NOT IN ('Cancelado', 'Faltou')
+            AND scheduled_at < DATE_ADD(?, INTERVAL ? MINUTE)
+            AND DATE_ADD(scheduled_at, INTERVAL duration_minutes MINUTE) > ? LIMIT 1 FOR UPDATE`, [ownerId, occurrence, durationMinutes, occurrence]);
+          if (conflicts.length) {
+            await connection.rollback();
+            return Response.json({ error: `O horário de ${appointmentDateTimeBR(occurrence)} já está ocupado. Nenhum agendamento da repetição foi criado.` }, { status: 409 });
+          }
+        }
+        for (const occurrence of occurrences) await connection.execute("INSERT INTO appointments (owner_id, patient_id, scheduled_at, duration_minutes, notes) VALUES (?, ?, ?, ?, ?)", [ownerId, patientId, occurrence, durationMinutes, String(body.notes || "")]);
+        await connection.commit();
+      } catch (error) {
+        await connection.rollback();
+        throw error;
+      } finally {
+        connection.release();
+      }
     } else if (action === "patient.update") {
       const id = Number(body.id); const name = String(body.name || "").trim();
       if (!id || !name) return Response.json({ error: "Paciente inválido." }, { status: 400 });
