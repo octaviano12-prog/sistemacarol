@@ -146,6 +146,24 @@ export async function POST(request: Request) {
         if (paid > 0) await connection.execute("INSERT INTO payments (owner_id, patient_id, package_id, amount_cents, method, paid_at, notes) VALUES (?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, created.insertId, paid, method, purchasedAt, "Pagamento inicial do pacote"]);
         await connection.commit();
       } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
+    } else if (action === "package.update") {
+      const id = Number(body.id);
+      const name = String(body.name || "").trim();
+      const totalSessions = Math.trunc(Number(body.totalSessions));
+      const totalAmountCents = Math.round(Number(body.totalAmount || 0) * 100);
+      const purchasedAt = String(body.purchasedAt || "");
+      const paymentDueDate = body.paymentDueDate ? String(body.paymentDueDate) : null;
+      const paymentMethod = String(body.paymentMethod || "Não informado");
+      const found = await rows<(RowDataPacket & { paidAmountCents: number; usedSessions: number })[]>(`SELECT pkg.paid_amount_cents AS paidAmountCents,
+        (SELECT COUNT(*) FROM sessions s WHERE s.package_id = pkg.id AND s.owner_id = pkg.owner_id AND s.voided_at IS NULL) AS usedSessions
+        FROM packages pkg WHERE pkg.id = ? AND pkg.owner_id = ? LIMIT 1`, [id, ownerId]);
+      if (!found.length) return Response.json({ error: "Pacote não encontrado." }, { status: 404 });
+      if (!name || !purchasedAt || !Number.isFinite(totalSessions) || totalSessions < 1 || !Number.isFinite(totalAmountCents) || totalAmountCents < 0) return Response.json({ error: "Preencha corretamente os dados do pacote." }, { status: 400 });
+      if (totalSessions < found[0].usedSessions) return Response.json({ error: `Este pacote já possui ${found[0].usedSessions} sessão(ões) realizada(s). A quantidade total não pode ser menor que isso.` }, { status: 400 });
+      if (totalAmountCents < found[0].paidAmountCents) return Response.json({ error: "O valor total não pode ser menor que o valor que já foi pago." }, { status: 400 });
+      const paymentStatus = found[0].paidAmountCents <= 0 ? "Pendente" : found[0].paidAmountCents >= totalAmountCents ? "Pago" : "Parcial";
+      const status = found[0].usedSessions >= totalSessions ? "Concluído" : "Em andamento";
+      await pool.execute("UPDATE packages SET name = ?, total_sessions = ?, total_amount_cents = ?, payment_method = ?, payment_status = ?, purchased_at = ?, payment_due_date = ?, status = ? WHERE id = ? AND owner_id = ?", [name, totalSessions, totalAmountCents, paymentMethod, paymentStatus, purchasedAt, paymentDueDate, status, id, ownerId]);
     } else if (action === "session.create") {
       const packageId = Number(body.packageId);
       const packages = await rows<(RowDataPacket & { id: number; patientId: number; totalSessions: number })[]>("SELECT id, patient_id AS patientId, total_sessions AS totalSessions FROM packages WHERE id = ? AND owner_id = ? LIMIT 1", [packageId, ownerId]);
