@@ -93,6 +93,7 @@ export async function ensureSchema() {
       title VARCHAR(160) NOT NULL DEFAULT '',
       scheduled_at DATETIME NOT NULL,
       duration_minutes INT UNSIGNED NOT NULL DEFAULT 50,
+      is_backup BOOLEAN NOT NULL DEFAULT FALSE,
       status VARCHAR(30) NOT NULL DEFAULT 'Agendado',
       notes TEXT NOT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -142,6 +143,8 @@ export async function ensureSchema() {
   if (!photoColumn.length) await pool.execute("ALTER TABLE patients ADD COLUMN profile_photo MEDIUMTEXT NULL AFTER email");
   const [appointmentTitleColumn] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'appointments' AND COLUMN_NAME = 'title'");
   if (!appointmentTitleColumn.length) await pool.execute("ALTER TABLE appointments ADD COLUMN title VARCHAR(160) NOT NULL DEFAULT '' AFTER patient_id");
+  const [appointmentBackupColumn] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'appointments' AND COLUMN_NAME = 'is_backup'");
+  if (!appointmentBackupColumn.length) await pool.execute("ALTER TABLE appointments ADD COLUMN is_backup BOOLEAN NOT NULL DEFAULT FALSE AFTER duration_minutes");
   const [appointmentPatientColumn] = await pool.execute<RowDataPacket[]>("SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'appointments' AND COLUMN_NAME = 'patient_id'");
   if (appointmentPatientColumn[0]?.IS_NULLABLE === "NO") await pool.execute("ALTER TABLE appointments MODIFY COLUMN patient_id INT UNSIGNED NULL");
   schemaReady = true;

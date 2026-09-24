@@ -66,7 +66,7 @@ async function loadClinic(ownerId: string) {
   const packageRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, name, total_sessions AS totalSessions, total_amount_cents AS totalAmountCents, paid_amount_cents AS paidAmountCents, payment_method AS paymentMethod, payment_status AS paymentStatus, purchased_at AS purchasedAt, last_payment_at AS lastPaymentAt, payment_due_date AS paymentDueDate, status, created_at AS createdAt FROM packages WHERE owner_id = ? ORDER BY purchased_at DESC, id DESC", [ownerId]);
   const sessionRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes, updated_at AS updatedAt, created_at AS createdAt FROM sessions WHERE owner_id = ? AND voided_at IS NULL ORDER BY performed_at DESC, id DESC", [ownerId]);
   const paymentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, amount_cents AS amountCents, method, paid_at AS paidAt, notes, created_at AS createdAt FROM payments WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
-  const appointmentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, title, scheduled_at AS scheduledAt, duration_minutes AS durationMinutes, status, notes, created_at AS createdAt FROM appointments WHERE owner_id = ? ORDER BY scheduled_at", [ownerId]);
+  const appointmentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, title, scheduled_at AS scheduledAt, duration_minutes AS durationMinutes, is_backup AS isBackup, status, notes, created_at AS createdAt FROM appointments WHERE owner_id = ? ORDER BY scheduled_at", [ownerId]);
   const expenseRows = await rows<RowDataPacket[]>("SELECT id, description, category, amount_cents AS amountCents, paid_at AS paidAt, notes, created_at AS createdAt FROM expenses WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
   const mappedPackages = packageRows.map(mapDates);
   const mappedSessions = sessionRows.map(mapDates);
@@ -170,6 +170,7 @@ export async function POST(request: Request) {
       await pool.execute("UPDATE packages SET paid_amount_cents = ?, payment_method = ?, last_payment_at = ?, payment_status = ? WHERE id = ? AND owner_id = ?", [newPaid, method, paidAt, newPaid >= packages[0].totalAmountCents ? "Pago" : "Parcial", packageId, ownerId]);
     } else if (action === "appointment.create" || action === "appointment.block") {
       const isBlock = action === "appointment.block";
+      const allowOverlap = !isBlock && (body.allowOverlap === true || String(body.allowOverlap || "") === "on");
       const patientId = isBlock ? null : Number(body.patientId); const scheduledAt = String(body.scheduledAt || "").replace("T", " ");
       const title = isBlock ? String(body.title || "Compromisso pessoal").trim() : "";
       if ((!isBlock && !patientId) || !scheduledAt || (isBlock && !title)) return Response.json({ error: isBlock ? "Informe o compromisso, a data e o horário." : "Escolha o paciente e a data." }, { status: 400 });
@@ -182,16 +183,21 @@ export async function POST(request: Request) {
       try {
         await connection.beginTransaction();
         for (const occurrence of occurrences) {
-          const [conflicts] = await connection.execute<RowDataPacket[]>(`SELECT id FROM appointments
+          const [conflicts] = await connection.execute<RowDataPacket[]>(`SELECT id, patient_id AS patientId, is_backup AS isBackup FROM appointments
             WHERE owner_id = ? AND status NOT IN ('Cancelado', 'Faltou')
             AND scheduled_at < DATE_ADD(?, INTERVAL ? MINUTE)
-            AND DATE_ADD(scheduled_at, INTERVAL duration_minutes MINUTE) > ? LIMIT 1 FOR UPDATE`, [ownerId, occurrence, durationMinutes, occurrence]);
-          if (conflicts.length) {
+            AND DATE_ADD(scheduled_at, INTERVAL duration_minutes MINUTE) > ? FOR UPDATE`, [ownerId, occurrence, durationMinutes, occurrence]);
+          const hasPersonalBlock = conflicts.some((conflict) => conflict.patientId === null);
+          const hasBackup = conflicts.some((conflict) => Boolean(conflict.isBackup));
+          const onlyReservedSlot = conflicts.length === 1 && Boolean(conflicts[0].isBackup);
+          const unavailable = isBlock ? conflicts.length > 0 : hasPersonalBlock || (!allowOverlap && conflicts.length > 0 && !onlyReservedSlot) || (allowOverlap && (conflicts.length >= 2 || hasBackup));
+          if (unavailable) {
             await connection.rollback();
-            return Response.json({ error: `O horário de ${appointmentDateTimeBR(occurrence)} já está ocupado. Nenhum agendamento da repetição foi criado.` }, { status: 409 });
+            const reason = hasPersonalBlock ? "está bloqueado por um compromisso pessoal" : conflicts.length >= 2 ? "já tem dois pacientes" : "já está ocupado";
+            return Response.json({ error: `O horário de ${appointmentDateTimeBR(occurrence)} ${reason}. Nenhum agendamento da repetição foi criado.` }, { status: 409 });
           }
         }
-        for (const occurrence of occurrences) await connection.execute("INSERT INTO appointments (owner_id, patient_id, title, scheduled_at, duration_minutes, status, notes) VALUES (?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, title, occurrence, durationMinutes, isBlock ? "Bloqueado" : "Agendado", String(body.notes || "")]);
+        for (const occurrence of occurrences) await connection.execute("INSERT INTO appointments (owner_id, patient_id, title, scheduled_at, duration_minutes, is_backup, status, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, title, occurrence, durationMinutes, allowOverlap, isBlock ? "Bloqueado" : "Agendado", String(body.notes || "")]);
         await connection.commit();
       } catch (error) {
         await connection.rollback();
@@ -201,17 +207,20 @@ export async function POST(request: Request) {
       }
     } else if (action === "appointment.update") {
       const id = Number(body.id); const scheduledAt = String(body.scheduledAt || "").replace("T", " ");
-      const found = await rows<(RowDataPacket & { patientId: number | null })[]>("SELECT patient_id AS patientId FROM appointments WHERE id = ? AND owner_id = ? LIMIT 1", [id, ownerId]);
+      const found = await rows<(RowDataPacket & { patientId: number | null; isBackup: boolean })[]>("SELECT patient_id AS patientId, is_backup AS isBackup FROM appointments WHERE id = ? AND owner_id = ? LIMIT 1", [id, ownerId]);
       if (!found.length || !scheduledAt) return Response.json({ error: "Agendamento inválido." }, { status: 400 });
       const patientId = found[0].patientId;
       const requestedDuration = patientId === null ? Number(body.durationHours || 1) * 60 : Number(body.durationMinutes || 50);
       const durationMinutes = Number.isFinite(requestedDuration) ? Math.min(720, Math.max(10, Math.trunc(requestedDuration))) : 50;
       const title = patientId === null ? String(body.title || "Compromisso pessoal").trim() : "";
-      const conflicts = await rows<RowDataPacket[]>(`SELECT id FROM appointments
+      const conflicts = await rows<RowDataPacket[]>(`SELECT id, patient_id AS patientId, is_backup AS isBackup FROM appointments
         WHERE owner_id = ? AND id <> ? AND status NOT IN ('Cancelado', 'Faltou')
         AND scheduled_at < DATE_ADD(?, INTERVAL ? MINUTE)
-        AND DATE_ADD(scheduled_at, INTERVAL duration_minutes MINUTE) > ? LIMIT 1`, [ownerId, id, scheduledAt, durationMinutes, scheduledAt]);
-      if (conflicts.length) return Response.json({ error: "O novo horário já está ocupado. Escolha outro horário na agenda." }, { status: 409 });
+        AND DATE_ADD(scheduled_at, INTERVAL duration_minutes MINUTE) > ?`, [ownerId, id, scheduledAt, durationMinutes, scheduledAt]);
+      const hasPersonalBlock = conflicts.some((conflict) => conflict.patientId === null);
+      const regularConflict = conflicts.some((conflict) => !Boolean(conflict.isBackup));
+      const unavailable = patientId === null ? conflicts.length > 0 : hasPersonalBlock || conflicts.length >= 2 || (!found[0].isBackup && regularConflict);
+      if (unavailable) return Response.json({ error: hasPersonalBlock ? "O novo horário está bloqueado por um compromisso pessoal." : conflicts.length >= 2 ? "Este horário já tem dois pacientes." : "O novo horário já está ocupado. Escolha outro horário na agenda." }, { status: 409 });
       await pool.execute("UPDATE appointments SET title = ?, scheduled_at = ?, duration_minutes = ?, notes = ? WHERE id = ? AND owner_id = ?", [title, scheduledAt, durationMinutes, String(body.notes || ""), id, ownerId]);
     } else if (action === "patient.update") {
       const id = Number(body.id); const name = String(body.name || "").trim();
