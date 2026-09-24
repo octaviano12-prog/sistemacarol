@@ -1,32 +1,45 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { RowDataPacket } from "mysql2";
-import { ensureSchema, rows } from "@/lib/db";
+import { useParams } from "next/navigation";
 import { calculateSessionCoverage } from "@/lib/payment-coverage";
 import PrintButton from "./print-button";
 
-export const dynamic = "force-dynamic";
-
-type PatientRow = RowDataPacket & { id: number; name: string; phone: string; email: string; profilePhoto: string; notes: string };
-type PackageRow = RowDataPacket & { id: number; name: string; totalSessions: number; totalAmountCents: number; paidAmountCents: number; paymentStatus: string; purchasedAt: string | Date; paymentDueDate: string | Date | null; status: string };
-type SessionRow = RowDataPacket & { id: number; packageId: number; performedAt: string | Date; procedureType: string; measurementIn: string; measurementOut: string; occurrences: string; notes: string };
-type PaymentRow = RowDataPacket & { id: number; packageId: number; amountCents: number; method: string; paidAt: string | Date; notes: string };
+type PatientRow = { id: number; name: string; phone: string; email: string; profilePhoto: string; notes: string };
+type PackageRow = { id: number; patientId: number; name: string; totalSessions: number; totalAmountCents: number; paidAmountCents: number; paymentStatus: string; purchasedAt: string; paymentDueDate: string | null; status: string };
+type SessionRow = { id: number; patientId: number; packageId: number; performedAt: string; procedureType: string; measurementIn: string; measurementOut: string; occurrences: string; notes: string };
+type PaymentRow = { id: number; patientId: number; packageId: number; amountCents: number; method: string; paidAt: string; notes: string };
+type ReportData = { patients: PatientRow[]; packages: PackageRow[]; sessions: SessionRow[]; payments: PaymentRow[] };
 
 const money = (value: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value / 100);
 const dateBR = (value?: string | Date | null) => value ? new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(value instanceof Date ? value : new Date(`${String(value).slice(0, 10)}T12:00:00Z`)) : "—";
 
-export default async function PatientReportPage({ params }: { params: Promise<{ id: string }> }) {
-  await ensureSchema();
-  const { id: rawId } = await params;
-  const id = Number(rawId);
-  const ownerId = process.env.CLINIC_OWNER_ID || "clinica-essencia";
-  if (!id) notFound();
-  const patients = await rows<PatientRow[]>("SELECT id, name, phone, email, COALESCE(profile_photo, '') AS profilePhoto, notes FROM patients WHERE id = ? AND owner_id = ? LIMIT 1", [id, ownerId]);
-  if (!patients.length) notFound();
-  const patient = patients[0];
-  const packages = await rows<PackageRow[]>("SELECT id, name, total_sessions AS totalSessions, total_amount_cents AS totalAmountCents, paid_amount_cents AS paidAmountCents, payment_status AS paymentStatus, purchased_at AS purchasedAt, payment_due_date AS paymentDueDate, status FROM packages WHERE patient_id = ? AND owner_id = ? ORDER BY purchased_at DESC, id DESC", [id, ownerId]);
-  const sessions = await rows<SessionRow[]>("SELECT id, package_id AS packageId, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes FROM sessions WHERE patient_id = ? AND owner_id = ? AND voided_at IS NULL ORDER BY performed_at DESC, id DESC", [id, ownerId]);
-  const payments = await rows<PaymentRow[]>("SELECT id, package_id AS packageId, amount_cents AS amountCents, method, paid_at AS paidAt, notes FROM payments WHERE patient_id = ? AND owner_id = ? ORDER BY paid_at DESC, id DESC", [id, ownerId]);
+export default function PatientReportPage() {
+  const params = useParams<{ id: string }>();
+  const id = Number(params.id);
+  const [data, setData] = useState<ReportData | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/clinic", { cache: "no-store" }).then(async (response) => {
+      const result = await response.json() as ReportData & { error?: string };
+      if (!response.ok) throw new Error(result.error || "Não foi possível carregar o relatório.");
+      if (active) setData(result);
+    }).catch((reason) => {
+      if (active) setError(reason instanceof Error ? reason.message : "Não foi possível carregar o relatório.");
+    });
+    return () => { active = false; };
+  }, []);
+
+  if (error) return <ReportMessage title="Não foi possível abrir o relatório" text={error} />;
+  if (!data) return <ReportMessage title="Preparando relatório" text="Carregando os dados atualizados do paciente…" />;
+  const patient = data.patients.find((item) => Number(item.id) === id);
+  if (!patient) return <ReportMessage title="Paciente não encontrado" text="Volte ao sistema e abra novamente o prontuário desejado." />;
+  const packages = data.packages.filter((item) => Number(item.patientId) === id);
+  const sessions = data.sessions.filter((item) => Number(item.patientId) === id);
+  const payments = data.payments.filter((item) => Number(item.patientId) === id);
   const coverage = calculateSessionCoverage(
     packages.map((pkg) => ({ id: Number(pkg.id), totalSessions: Number(pkg.totalSessions), totalAmountCents: Number(pkg.totalAmountCents), paidAmountCents: Number(pkg.paidAmountCents), paymentDueDate: pkg.paymentDueDate })),
     sessions.map((session) => ({ id: Number(session.id), packageId: Number(session.packageId), performedAt: session.performedAt })),
@@ -50,3 +63,4 @@ export default async function PatientReportPage({ params }: { params: Promise<{ 
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="rounded-xl border p-3"><p className="text-xs text-[#758179]">{label}</p><strong className="mt-1 block">{value}</strong></div>; }
 function Title({ children }: { children: React.ReactNode }) { return <h2 className="font-serif text-2xl font-semibold">{children}</h2>; }
+function ReportMessage({ title, text }: { title: string; text: string }) { return <main className="grid min-h-screen place-items-center bg-[#f4f7f5] p-5 text-[#17231f]"><section className="w-full max-w-md rounded-[24px] border bg-white p-7 text-center shadow-sm"><h1 className="font-serif text-2xl font-semibold">{title}</h1><p className="mt-3 text-sm leading-relaxed text-[#6f7d75]">{text}</p><Link href="/" className="mt-6 inline-flex h-10 items-center rounded-xl bg-[#08684e] px-4 text-sm font-medium text-white">Voltar ao sistema</Link></section></main>; }
