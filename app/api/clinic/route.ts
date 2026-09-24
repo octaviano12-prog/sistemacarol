@@ -39,7 +39,7 @@ async function seedIfEmpty(ownerId: string) {
     }
     for (let packageIndex = 0; packageIndex < packageIds.length; packageIndex++) {
       for (let index = 0; index < [3, 6, 7, 4][packageIndex]; index++) {
-        await connection.execute("INSERT INTO sessions (owner_id, patient_id, package_id, performed_at, notes) VALUES (?, ?, ?, ?, ?)", [ownerId, patientIds[packageIndex], packageIds[packageIndex], `2026-09-${String(18 - index).padStart(2, "0")}`, index === 0 ? "Sessão concluída normalmente" : ""]);
+        await connection.execute("INSERT INTO sessions (owner_id, patient_id, package_id, performed_at, procedure_type, measurement_in, measurement_out, occurrences, notes) VALUES (?, ?, ?, ?, ?, '', '', '', ?)", [ownerId, patientIds[packageIndex], packageIds[packageIndex], `2026-09-${String(18 - index).padStart(2, "0")}`, "Fisioterapia", index === 0 ? "Sessão concluída normalmente" : ""]);
       }
       await connection.execute("INSERT INTO payments (owner_id, patient_id, package_id, amount_cents, method, paid_at, notes) VALUES (?, ?, ?, ?, ?, ?, ?)", [ownerId, patientIds[packageIndex], packageIds[packageIndex], packageSeed[packageIndex][4], packageSeed[packageIndex][5], packageSeed[packageIndex][8], "Pagamento registrado"]);
     }
@@ -67,7 +67,7 @@ function mapDates(row: Record<string, unknown>) {
 async function loadClinic(ownerId: string) {
   const patientRows = await rows<RowDataPacket[]>("SELECT id, name, phone, email, birth_date AS birthDate, notes, active, created_at AS createdAt FROM patients WHERE owner_id = ? ORDER BY name", [ownerId]);
   const packageRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, name, total_sessions AS totalSessions, total_amount_cents AS totalAmountCents, paid_amount_cents AS paidAmountCents, payment_method AS paymentMethod, payment_status AS paymentStatus, purchased_at AS purchasedAt, last_payment_at AS lastPaymentAt, status, created_at AS createdAt FROM packages WHERE owner_id = ? ORDER BY purchased_at DESC, id DESC", [ownerId]);
-  const sessionRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, performed_at AS performedAt, notes, created_at AS createdAt FROM sessions WHERE owner_id = ? ORDER BY performed_at DESC, id DESC", [ownerId]);
+  const sessionRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, occurrences, notes, created_at AS createdAt FROM sessions WHERE owner_id = ? ORDER BY performed_at DESC, id DESC", [ownerId]);
   const paymentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, amount_cents AS amountCents, method, paid_at AS paidAt, notes, created_at AS createdAt FROM payments WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
   const appointmentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, scheduled_at AS scheduledAt, duration_minutes AS durationMinutes, status, notes, created_at AS createdAt FROM appointments WHERE owner_id = ? ORDER BY scheduled_at", [ownerId]);
   const expenseRows = await rows<RowDataPacket[]>("SELECT id, description, category, amount_cents AS amountCents, paid_at AS paidAt, notes, created_at AS createdAt FROM expenses WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
@@ -136,7 +136,7 @@ export async function POST(request: Request) {
       if (!packages.length) return Response.json({ error: "Pacote não encontrado." }, { status: 404 });
       const count = await rows<(RowDataPacket & { total: number })[]>("SELECT COUNT(*) AS total FROM sessions WHERE package_id = ? AND owner_id = ?", [packageId, ownerId]);
       if (count[0].total >= packages[0].totalSessions) return Response.json({ error: "Este pacote não possui sessões disponíveis." }, { status: 400 });
-      await pool.execute("INSERT INTO sessions (owner_id, patient_id, package_id, performed_at, notes) VALUES (?, ?, ?, ?, ?)", [ownerId, packages[0].patientId, packageId, String(body.performedAt || today()), String(body.notes || "")]);
+      await pool.execute("INSERT INTO sessions (owner_id, patient_id, package_id, performed_at, procedure_type, measurement_in, measurement_out, occurrences, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, packages[0].patientId, packageId, String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || "")]);
       if (count[0].total + 1 >= packages[0].totalSessions) await pool.execute("UPDATE packages SET status = 'Concluído' WHERE id = ? AND owner_id = ?", [packageId, ownerId]);
     } else if (action === "payment.create") {
       const packageId = Number(body.packageId); const amountCents = Math.round(Number(body.amount || 0) * 100);

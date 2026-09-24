@@ -57,6 +57,10 @@ export async function ensureSchema() {
       patient_id INT UNSIGNED NOT NULL,
       package_id INT UNSIGNED NOT NULL,
       performed_at DATE NOT NULL,
+      procedure_type VARCHAR(120) NOT NULL DEFAULT '',
+      measurement_in VARCHAR(120) NOT NULL DEFAULT '',
+      measurement_out VARCHAR(120) NOT NULL DEFAULT '',
+      occurrences TEXT NOT NULL,
       notes TEXT NOT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CONSTRAINT fk_sessions_patient FOREIGN KEY (patient_id) REFERENCES patients(id),
@@ -102,6 +106,16 @@ export async function ensureSchema() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   ];
   for (const statement of statements) await pool.execute(statement);
+  const sessionColumns = [
+    ["procedure_type", "VARCHAR(120) NOT NULL DEFAULT '' AFTER performed_at"],
+    ["measurement_in", "VARCHAR(120) NOT NULL DEFAULT '' AFTER procedure_type"],
+    ["measurement_out", "VARCHAR(120) NOT NULL DEFAULT '' AFTER measurement_in"],
+    ["occurrences", "TEXT NOT NULL AFTER measurement_out"],
+  ] as const;
+  for (const [column, definition] of sessionColumns) {
+    const [existing] = await pool.execute<RowDataPacket[]>("SHOW COLUMNS FROM sessions LIKE ?", [column]);
+    if (!existing.length) await pool.execute(`ALTER TABLE sessions ADD COLUMN ${column} ${definition}`);
+  }
   schemaReady = true;
 }
 
