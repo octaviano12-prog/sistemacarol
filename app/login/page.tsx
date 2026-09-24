@@ -2,7 +2,6 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
 import { ArrowRight, Eye, EyeOff, HeartPulse, Leaf, LockKeyhole, ShieldCheck, Sparkles, UserRound } from "lucide-react";
 
 export default function LoginPage() {
@@ -57,7 +56,7 @@ export default function LoginPage() {
       <div className="w-full max-w-[470px]">
         <div className="mb-9 flex items-center gap-3 lg:hidden"><span className="grid size-11 place-items-center rounded-2xl bg-[#07533f] text-[#ead9a5]"><Sparkles /></span><div><p className="font-serif text-xl font-semibold text-[#17352b]">Clínica Essência</p><p className="text-xs text-[#718078]">Cuidado em cada sessão</p></div></div>
         <div className="login-card rounded-[30px] border border-white/80 bg-white/85 p-7 shadow-[0_30px_80px_rgba(20,65,48,.12)] backdrop-blur-xl sm:p-10">
-          <div className="mb-7 flex items-center justify-between"><div className="relative"><Image src="/dra-maria-carolini.jpg" alt="Dra. Maria Carolini" width={88} height={88} priority className="size-[88px] rounded-[26px] border-4 border-white object-cover object-[center_32%] shadow-xl shadow-emerald-950/15" /><span className="absolute -bottom-2 -right-2 grid size-8 place-items-center rounded-xl border-2 border-white bg-[#e7f3ec] text-[#07533f] shadow-md"><Sparkles className="size-4" /></span></div><span className="login-lock grid size-12 place-items-center rounded-2xl bg-[#e7f3ec] text-[#07533f]"><LockKeyhole className="size-5" /></span></div>
+          <div className="mb-7 flex items-center justify-between"><div className="relative"><span role="img" aria-label="Foto da Dra. Maria Carolini" style={{ backgroundImage: "url('/dra-maria-carolini.jpg')", backgroundSize: "cover", backgroundPosition: "center 32%" }} className="block size-[88px] rounded-[26px] border-4 border-white shadow-xl shadow-emerald-950/15" /><span className="absolute -bottom-2 -right-2 grid size-8 place-items-center rounded-xl border-2 border-white bg-[#e7f3ec] text-[#07533f] shadow-md"><Sparkles className="size-4" /></span></div><span className="login-lock grid size-12 place-items-center rounded-2xl bg-[#e7f3ec] text-[#07533f]"><LockKeyhole className="size-5" /></span></div>
           <p className="text-sm font-semibold uppercase tracking-[.18em] text-[#9b7b3f]">Área exclusiva</p>
           <h2 className="mt-2 font-serif text-4xl font-semibold text-[#17352b]">Bem-vinda, Dra. Maria Carolini</h2>
           <p className="mt-3 leading-relaxed text-[#718078]">Entre com seus dados para acessar o painel da clínica.</p>
