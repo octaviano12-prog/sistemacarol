@@ -15,44 +15,23 @@ function validProfilePhoto(value: unknown) {
   return photo;
 }
 
-async function seedIfEmpty(ownerId: string) {
-  const existing = await rows<IdRow[]>("SELECT id FROM patients WHERE owner_id = ? LIMIT 1", [ownerId]);
-  if (existing.length) return;
+async function removeLegacyDemoData(ownerId: string) {
+  const demoEmails = ["mariana@email.com", "lucas@email.com", "camila@email.com", "rafael@email.com"];
+  const placeholders = demoEmails.map(() => "?").join(", ");
+  const demoPatients = await rows<IdRow[]>(`SELECT id FROM patients WHERE owner_id = ? AND email IN (${placeholders})`, [ownerId, ...demoEmails]);
+  if (!demoPatients.length) return;
+  const patientIds = demoPatients.map((patient) => patient.id);
+  const idPlaceholders = patientIds.map(() => "?").join(", ");
   const pool = getPool();
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    const patientSeed = [
-      ["Mariana Souza", "(11) 98765-4321", "mariana@email.com", "Fisioterapia ortopédica"],
-      ["Lucas Oliveira", "(11) 99812-4477", "lucas@email.com", "Pilates terapêutico"],
-      ["Camila Martins", "(11) 97654-1108", "camila@email.com", "Fisioterapia preventiva"],
-      ["Rafael Lima", "(11) 96543-8890", "rafael@email.com", "Reabilitação esportiva"],
-    ];
-    const patientIds: number[] = [];
-    for (const [name, phone, email, notes] of patientSeed) {
-      const [result] = await connection.execute<ResultSetHeader>("INSERT INTO patients (owner_id, name, phone, email, notes) VALUES (?, ?, ?, ?, ?)", [ownerId, name, phone, email, notes]);
-      patientIds.push(result.insertId);
-    }
-    const packageSeed = [
-      [patientIds[0], "Pacote de 5 sessões", 5, 75000, 75000, "Pix", "Pago", "2026-09-18", "2026-09-18"],
-      [patientIds[1], "Pacote de 10 sessões", 10, 130000, 65000, "Cartão", "Parcial", "2026-09-12", "2026-09-12"],
-      [patientIds[2], "Pacote de 8 sessões", 8, 112000, 112000, "Pix", "Pago", "2026-09-10", "2026-09-10"],
-      [patientIds[3], "Pacote de 5 sessões", 5, 70000, 70000, "Dinheiro", "Pago", "2026-09-08", "2026-09-08"],
-    ];
-    const packageIds: number[] = [];
-    for (const pkg of packageSeed) {
-      const [result] = await connection.execute<ResultSetHeader>("INSERT INTO packages (owner_id, patient_id, name, total_sessions, total_amount_cents, paid_amount_cents, payment_method, payment_status, purchased_at, last_payment_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, ...pkg]);
-      packageIds.push(result.insertId);
-    }
-    for (let packageIndex = 0; packageIndex < packageIds.length; packageIndex++) {
-      for (let index = 0; index < [3, 6, 7, 4][packageIndex]; index++) {
-        await connection.execute("INSERT INTO sessions (owner_id, patient_id, package_id, performed_at, procedure_type, measurement_in, measurement_out, occurrences, notes) VALUES (?, ?, ?, ?, ?, '', '', '', ?)", [ownerId, patientIds[packageIndex], packageIds[packageIndex], `2026-09-${String(18 - index).padStart(2, "0")}`, "Fisioterapia", index === 0 ? "Sessão concluída normalmente" : ""]);
-      }
-      await connection.execute("INSERT INTO payments (owner_id, patient_id, package_id, amount_cents, method, paid_at, notes) VALUES (?, ?, ?, ?, ?, ?, ?)", [ownerId, patientIds[packageIndex], packageIds[packageIndex], packageSeed[packageIndex][4], packageSeed[packageIndex][5], packageSeed[packageIndex][8], "Pagamento registrado"]);
-    }
-    for (const [patientIndex, hour] of [[0, "09:00"], [1, "10:30"], [2, "14:00"]] as const) {
-      await connection.execute("INSERT INTO appointments (owner_id, patient_id, scheduled_at, duration_minutes, notes) VALUES (?, ?, ?, ?, '')", [ownerId, patientIds[patientIndex], `${today()} ${hour}:00`, 50]);
-    }
+    await connection.execute(`DELETE al FROM audit_logs al INNER JOIN sessions s ON s.id = al.entity_id AND al.entity_type = 'session' WHERE s.owner_id = ? AND s.patient_id IN (${idPlaceholders})`, [ownerId, ...patientIds]);
+    await connection.execute(`DELETE FROM appointments WHERE owner_id = ? AND patient_id IN (${idPlaceholders})`, [ownerId, ...patientIds]);
+    await connection.execute(`DELETE FROM payments WHERE owner_id = ? AND patient_id IN (${idPlaceholders})`, [ownerId, ...patientIds]);
+    await connection.execute(`DELETE FROM sessions WHERE owner_id = ? AND patient_id IN (${idPlaceholders})`, [ownerId, ...patientIds]);
+    await connection.execute(`DELETE FROM packages WHERE owner_id = ? AND patient_id IN (${idPlaceholders})`, [ownerId, ...patientIds]);
+    await connection.execute(`DELETE FROM patients WHERE owner_id = ? AND id IN (${idPlaceholders})`, [ownerId, ...patientIds]);
     await connection.commit();
   } catch (error) {
     await connection.rollback();
@@ -117,7 +96,7 @@ export async function GET(request: Request) {
   try {
     await ensureSchema();
     const ownerId = ownerFrom(request);
-    if (process.env.SEED_DEMO_DATA === "true") await seedIfEmpty(ownerId);
+    await removeLegacyDemoData(ownerId);
     const clinic = await loadClinic(ownerId);
     if (new URL(request.url).searchParams.get("export") === "backup") {
       const voidedSessions = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes, updated_at AS updatedAt, voided_at AS voidedAt, void_reason AS voidReason, created_at AS createdAt FROM sessions WHERE owner_id = ? AND voided_at IS NOT NULL ORDER BY id", [ownerId]);

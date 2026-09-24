@@ -26,7 +26,7 @@ npm install
 npm run dev
 ```
 
-Abra `http://localhost:3000`. Na primeira conexão, o sistema cria as tabelas e alguns registros de demonstração automaticamente.
+Abra `http://localhost:3000`. Na primeira conexão, o sistema cria somente as tabelas vazias, prontas para receber os dados reais da clínica.
 
 ## Variáveis de ambiente
 
