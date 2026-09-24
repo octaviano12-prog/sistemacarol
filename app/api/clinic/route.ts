@@ -57,7 +57,7 @@ async function seedIfEmpty(ownerId: string) {
 
 function mapDates(row: Record<string, unknown>) {
   const result = { ...row };
-  for (const key of ["createdAt", "purchasedAt", "lastPaymentAt", "performedAt", "paidAt", "scheduledAt"]) {
+  for (const key of ["createdAt", "updatedAt", "voidedAt", "purchasedAt", "lastPaymentAt", "performedAt", "paidAt", "scheduledAt"]) {
     const value = result[key];
     if (value instanceof Date) result[key] = value.toISOString().slice(0, key === "scheduledAt" ? 16 : 10);
   }
@@ -67,11 +67,15 @@ function mapDates(row: Record<string, unknown>) {
 async function loadClinic(ownerId: string) {
   const patientRows = await rows<RowDataPacket[]>("SELECT id, name, phone, email, birth_date AS birthDate, notes, active, created_at AS createdAt FROM patients WHERE owner_id = ? ORDER BY name", [ownerId]);
   const packageRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, name, total_sessions AS totalSessions, total_amount_cents AS totalAmountCents, paid_amount_cents AS paidAmountCents, payment_method AS paymentMethod, payment_status AS paymentStatus, purchased_at AS purchasedAt, last_payment_at AS lastPaymentAt, status, created_at AS createdAt FROM packages WHERE owner_id = ? ORDER BY purchased_at DESC, id DESC", [ownerId]);
-  const sessionRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes, created_at AS createdAt FROM sessions WHERE owner_id = ? ORDER BY performed_at DESC, id DESC", [ownerId]);
+  const sessionRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes, updated_at AS updatedAt, created_at AS createdAt FROM sessions WHERE owner_id = ? AND voided_at IS NULL ORDER BY performed_at DESC, id DESC", [ownerId]);
   const paymentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, amount_cents AS amountCents, method, paid_at AS paidAt, notes, created_at AS createdAt FROM payments WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
   const appointmentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, scheduled_at AS scheduledAt, duration_minutes AS durationMinutes, status, notes, created_at AS createdAt FROM appointments WHERE owner_id = ? ORDER BY scheduled_at", [ownerId]);
   const expenseRows = await rows<RowDataPacket[]>("SELECT id, description, category, amount_cents AS amountCents, paid_at AS paidAt, notes, created_at AS createdAt FROM expenses WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
   return { patients: patientRows.map(mapDates), packages: packageRows.map(mapDates), sessions: sessionRows.map(mapDates), payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), expenses: expenseRows.map(mapDates) };
+}
+
+async function logAction(ownerId: string, entityType: string, entityId: number, action: string, details = "") {
+  await getPool().execute("INSERT INTO audit_logs (owner_id, entity_type, entity_id, action, details) VALUES (?, ?, ?, ?, ?)", [ownerId, entityType, entityId, action, details]);
 }
 
 async function refreshPackagePayment(packageId: number, ownerId: string) {
@@ -100,7 +104,14 @@ export async function GET(request: Request) {
     await ensureSchema();
     const ownerId = ownerFrom(request);
     if (process.env.SEED_DEMO_DATA === "true") await seedIfEmpty(ownerId);
-    return Response.json(await loadClinic(ownerId));
+    const clinic = await loadClinic(ownerId);
+    if (new URL(request.url).searchParams.get("export") === "backup") {
+      const voidedSessions = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes, updated_at AS updatedAt, voided_at AS voidedAt, void_reason AS voidReason, created_at AS createdAt FROM sessions WHERE owner_id = ? AND voided_at IS NOT NULL ORDER BY id", [ownerId]);
+      const auditLogs = await rows<RowDataPacket[]>("SELECT entity_type AS entityType, entity_id AS entityId, action, details, created_at AS createdAt FROM audit_logs WHERE owner_id = ? ORDER BY id", [ownerId]);
+      const filename = `backup-clinica-${today()}.json`;
+      return new Response(JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), clinic, voidedSessions: voidedSessions.map(mapDates), auditLogs: auditLogs.map(mapDates) }, null, 2), { headers: { "Content-Type": "application/json; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"`, "Cache-Control": "no-store" } });
+    }
+    return Response.json(clinic);
   } catch (error) {
     console.error(error);
     return Response.json({ error: "Banco de dados indisponível. Verifique a configuração da Hostinger." }, { status: 500 });
@@ -134,10 +145,17 @@ export async function POST(request: Request) {
       const packageId = Number(body.packageId);
       const packages = await rows<(RowDataPacket & { id: number; patientId: number; totalSessions: number })[]>("SELECT id, patient_id AS patientId, total_sessions AS totalSessions FROM packages WHERE id = ? AND owner_id = ? LIMIT 1", [packageId, ownerId]);
       if (!packages.length) return Response.json({ error: "Pacote não encontrado." }, { status: 404 });
-      const count = await rows<(RowDataPacket & { total: number })[]>("SELECT COUNT(*) AS total FROM sessions WHERE package_id = ? AND owner_id = ?", [packageId, ownerId]);
+      const count = await rows<(RowDataPacket & { total: number })[]>("SELECT COUNT(*) AS total FROM sessions WHERE package_id = ? AND owner_id = ? AND voided_at IS NULL", [packageId, ownerId]);
       if (count[0].total >= packages[0].totalSessions) return Response.json({ error: "Este pacote não possui sessões disponíveis." }, { status: 400 });
-      await pool.execute("INSERT INTO sessions (owner_id, patient_id, package_id, performed_at, procedure_type, measurement_in, measurement_out, occurrences, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, packages[0].patientId, packageId, String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || "")]);
+      const [created] = await pool.execute<ResultSetHeader>("INSERT INTO sessions (owner_id, patient_id, package_id, performed_at, procedure_type, measurement_in, measurement_out, occurrences, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, packages[0].patientId, packageId, String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || "")]);
+      await logAction(ownerId, "session", created.insertId, "created");
       if (count[0].total + 1 >= packages[0].totalSessions) await pool.execute("UPDATE packages SET status = 'Concluído' WHERE id = ? AND owner_id = ?", [packageId, ownerId]);
+    } else if (action === "session.update") {
+      const id = Number(body.id);
+      const found = await rows<RowDataPacket[]>("SELECT performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes FROM sessions WHERE id = ? AND owner_id = ? AND voided_at IS NULL LIMIT 1", [id, ownerId]);
+      if (!found.length) return Response.json({ error: "Sessão não encontrada." }, { status: 404 });
+      await pool.execute("UPDATE sessions SET performed_at = ?, procedure_type = ?, measurement_in = ?, measurement_out = ?, occurrences = ?, notes = ? WHERE id = ? AND owner_id = ? AND voided_at IS NULL", [String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || ""), id, ownerId]);
+      await logAction(ownerId, "session", id, "updated", JSON.stringify(mapDates(found[0])));
     } else if (action === "payment.create") {
       const packageId = Number(body.packageId); const amountCents = Math.round(Number(body.amount || 0) * 100);
       const packages = await rows<(RowDataPacket & { patientId: number; totalAmountCents: number; paidAmountCents: number })[]>("SELECT patient_id AS patientId, total_amount_cents AS totalAmountCents, paid_amount_cents AS paidAmountCents FROM packages WHERE id = ? AND owner_id = ? LIMIT 1", [packageId, ownerId]);
@@ -173,7 +191,8 @@ export async function POST(request: Request) {
     } else if (action === "session.delete") {
       const id = Number(body.id);
       const found = await rows<(RowDataPacket & { packageId: number })[]>("SELECT package_id AS packageId FROM sessions WHERE id = ? AND owner_id = ?", [id, ownerId]);
-      await pool.execute("DELETE FROM sessions WHERE id = ? AND owner_id = ?", [id, ownerId]);
+      await pool.execute("UPDATE sessions SET voided_at = CURRENT_TIMESTAMP, void_reason = ? WHERE id = ? AND owner_id = ? AND voided_at IS NULL", [String(body.reason || "Registro cancelado pela profissional"), id, ownerId]);
+      await logAction(ownerId, "session", id, "voided", String(body.reason || "Registro cancelado pela profissional"));
       if (found.length) await pool.execute("UPDATE packages SET status = 'Em andamento' WHERE id = ? AND owner_id = ?", [found[0].packageId, ownerId]);
     } else if (action === "payment.delete") {
       const id = Number(body.id);

@@ -62,6 +62,9 @@ export async function ensureSchema() {
       measurement_out VARCHAR(120) NOT NULL DEFAULT '',
       occurrences TEXT NULL,
       notes TEXT NOT NULL,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      voided_at TIMESTAMP NULL,
+      void_reason VARCHAR(255) NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CONSTRAINT fk_sessions_patient FOREIGN KEY (patient_id) REFERENCES patients(id),
       CONSTRAINT fk_sessions_package FOREIGN KEY (package_id) REFERENCES packages(id),
@@ -104,6 +107,16 @@ export async function ensureSchema() {
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_expenses_owner_date (owner_id, paid_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    `CREATE TABLE IF NOT EXISTS audit_logs (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      owner_id VARCHAR(191) NOT NULL,
+      entity_type VARCHAR(40) NOT NULL,
+      entity_id INT UNSIGNED NOT NULL,
+      action VARCHAR(40) NOT NULL,
+      details TEXT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_audit_owner_entity (owner_id, entity_type, entity_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   ];
   for (const statement of statements) await pool.execute(statement);
   const sessionColumns = [
@@ -111,6 +124,9 @@ export async function ensureSchema() {
     ["measurement_in", "VARCHAR(120) NOT NULL DEFAULT '' AFTER procedure_type"],
     ["measurement_out", "VARCHAR(120) NOT NULL DEFAULT '' AFTER measurement_in"],
     ["occurrences", "TEXT NULL AFTER measurement_out"],
+    ["updated_at", "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER notes"],
+    ["voided_at", "TIMESTAMP NULL AFTER updated_at"],
+    ["void_reason", "VARCHAR(255) NULL AFTER voided_at"],
   ] as const;
   for (const [column, definition] of sessionColumns) {
     const [existing] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sessions' AND COLUMN_NAME = ?", [column]);
