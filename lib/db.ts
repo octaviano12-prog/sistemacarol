@@ -89,7 +89,8 @@ export async function ensureSchema() {
     `CREATE TABLE IF NOT EXISTS appointments (
       id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
       owner_id VARCHAR(191) NOT NULL,
-      patient_id INT UNSIGNED NOT NULL,
+      patient_id INT UNSIGNED NULL,
+      title VARCHAR(160) NOT NULL DEFAULT '',
       scheduled_at DATETIME NOT NULL,
       duration_minutes INT UNSIGNED NOT NULL DEFAULT 50,
       status VARCHAR(30) NOT NULL DEFAULT 'Agendado',
@@ -139,6 +140,10 @@ export async function ensureSchema() {
   await pool.execute("UPDATE packages SET payment_due_date = DATE_ADD(purchased_at, INTERVAL 30 DAY) WHERE payment_due_date IS NULL");
   const [photoColumn] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'patients' AND COLUMN_NAME = 'profile_photo'");
   if (!photoColumn.length) await pool.execute("ALTER TABLE patients ADD COLUMN profile_photo MEDIUMTEXT NULL AFTER email");
+  const [appointmentTitleColumn] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'appointments' AND COLUMN_NAME = 'title'");
+  if (!appointmentTitleColumn.length) await pool.execute("ALTER TABLE appointments ADD COLUMN title VARCHAR(160) NOT NULL DEFAULT '' AFTER patient_id");
+  const [appointmentPatientColumn] = await pool.execute<RowDataPacket[]>("SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'appointments' AND COLUMN_NAME = 'patient_id'");
+  if (appointmentPatientColumn[0]?.IS_NULLABLE === "NO") await pool.execute("ALTER TABLE appointments MODIFY COLUMN patient_id INT UNSIGNED NULL");
   schemaReady = true;
 }
 
