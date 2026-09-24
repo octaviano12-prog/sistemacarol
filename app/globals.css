@@ -372,6 +372,7 @@ tbody tr:hover { transform: translateX(2px); }
 .calendar-event strong, .calendar-event small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .calendar-event strong { font-size: 11px; }
 .calendar-event small { font-size: 9px; opacity: .72; }
+.calendar-continuation { border-left-style: dashed; box-shadow: none; }
 .calendar-scheduled { border-color: #167454; background: #dff2e8; color: #07533f; }
 .calendar-confirmed { border-color: #b38b30; background: #fff2cb; color: #725515; }
 .calendar-done { border-color: #536f89; background: #e7eef5; color: #3d566d; }
