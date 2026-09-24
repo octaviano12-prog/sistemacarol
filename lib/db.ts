@@ -28,6 +28,7 @@ export async function ensureSchema() {
       name VARCHAR(191) NOT NULL,
       phone VARCHAR(40) NOT NULL DEFAULT '',
       email VARCHAR(191) NOT NULL DEFAULT '',
+      profile_photo MEDIUMTEXT NULL,
       birth_date DATE NULL,
       notes TEXT NOT NULL,
       active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -136,6 +137,8 @@ export async function ensureSchema() {
   const [dueDateColumn] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'packages' AND COLUMN_NAME = 'payment_due_date'");
   if (!dueDateColumn.length) await pool.execute("ALTER TABLE packages ADD COLUMN payment_due_date DATE NULL AFTER last_payment_at");
   await pool.execute("UPDATE packages SET payment_due_date = DATE_ADD(purchased_at, INTERVAL 30 DAY) WHERE payment_due_date IS NULL");
+  const [photoColumn] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'patients' AND COLUMN_NAME = 'profile_photo'");
+  if (!photoColumn.length) await pool.execute("ALTER TABLE patients ADD COLUMN profile_photo MEDIUMTEXT NULL AFTER email");
   schemaReady = true;
 }
 

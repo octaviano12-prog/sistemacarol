@@ -8,6 +8,12 @@ export const dynamic = "force-dynamic";
 type IdRow = RowDataPacket & { id: number };
 const today = () => new Date().toISOString().slice(0, 10);
 const ownerFrom = (request: Request) => request.headers.get("x-clinic-owner") || process.env.CLINIC_OWNER_ID || "clinica-essencia";
+function validProfilePhoto(value: unknown) {
+  const photo = String(value || "");
+  if (!photo) return null;
+  if (!/^data:image\/(jpeg|png|webp);base64,/.test(photo) || photo.length > 1_500_000) throw new Error("A foto do paciente é inválida ou muito grande.");
+  return photo;
+}
 
 async function seedIfEmpty(ownerId: string) {
   const existing = await rows<IdRow[]>("SELECT id FROM patients WHERE owner_id = ? LIMIT 1", [ownerId]);
@@ -66,7 +72,7 @@ function mapDates(row: Record<string, unknown>) {
 }
 
 async function loadClinic(ownerId: string) {
-  const patientRows = await rows<RowDataPacket[]>("SELECT id, name, phone, email, birth_date AS birthDate, notes, active, created_at AS createdAt FROM patients WHERE owner_id = ? ORDER BY name", [ownerId]);
+  const patientRows = await rows<RowDataPacket[]>("SELECT id, name, phone, email, COALESCE(profile_photo, '') AS profilePhoto, birth_date AS birthDate, notes, active, created_at AS createdAt FROM patients WHERE owner_id = ? ORDER BY name", [ownerId]);
   const packageRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, name, total_sessions AS totalSessions, total_amount_cents AS totalAmountCents, paid_amount_cents AS paidAmountCents, payment_method AS paymentMethod, payment_status AS paymentStatus, purchased_at AS purchasedAt, last_payment_at AS lastPaymentAt, payment_due_date AS paymentDueDate, status, created_at AS createdAt FROM packages WHERE owner_id = ? ORDER BY purchased_at DESC, id DESC", [ownerId]);
   const sessionRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes, updated_at AS updatedAt, created_at AS createdAt FROM sessions WHERE owner_id = ? AND voided_at IS NULL ORDER BY performed_at DESC, id DESC", [ownerId]);
   const paymentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, amount_cents AS amountCents, method, paid_at AS paidAt, notes, created_at AS createdAt FROM payments WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
@@ -136,7 +142,8 @@ export async function POST(request: Request) {
     if (action === "patient.create") {
       const name = String(body.name || "").trim();
       if (!name) return Response.json({ error: "Informe o nome do paciente." }, { status: 400 });
-      await pool.execute("INSERT INTO patients (owner_id, name, phone, email, notes) VALUES (?, ?, ?, ?, ?)", [ownerId, name, String(body.phone || ""), String(body.email || ""), String(body.notes || "")]);
+      const profilePhoto = validProfilePhoto(body.profilePhoto);
+      await pool.execute("INSERT INTO patients (owner_id, name, phone, email, profile_photo, notes) VALUES (?, ?, ?, ?, ?, ?)", [ownerId, name, String(body.phone || ""), String(body.email || ""), profilePhoto, String(body.notes || "")]);
     } else if (action === "package.create") {
       const patientId = Number(body.patientId); const totalSessions = Number(body.totalSessions);
       if (!patientId || totalSessions < 1) return Response.json({ error: "Escolha o paciente e informe as sessões." }, { status: 400 });
@@ -184,7 +191,8 @@ export async function POST(request: Request) {
     } else if (action === "patient.update") {
       const id = Number(body.id); const name = String(body.name || "").trim();
       if (!id || !name) return Response.json({ error: "Paciente inválido." }, { status: 400 });
-      await pool.execute("UPDATE patients SET name = ?, phone = ?, email = ?, notes = ? WHERE id = ? AND owner_id = ?", [name, String(body.phone || ""), String(body.email || ""), String(body.notes || ""), id, ownerId]);
+      const profilePhoto = validProfilePhoto(body.profilePhoto);
+      await pool.execute("UPDATE patients SET name = ?, phone = ?, email = ?, profile_photo = ?, notes = ? WHERE id = ? AND owner_id = ?", [name, String(body.phone || ""), String(body.email || ""), profilePhoto, String(body.notes || ""), id, ownerId]);
     } else if (action === "package.dueDate") {
       const id = Number(body.id); const paymentDueDate = String(body.paymentDueDate || "");
       if (!id || !paymentDueDate) return Response.json({ error: "Informe uma data de vencimento válida." }, { status: 400 });
