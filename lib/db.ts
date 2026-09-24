@@ -60,7 +60,7 @@ export async function ensureSchema() {
       procedure_type VARCHAR(120) NOT NULL DEFAULT '',
       measurement_in VARCHAR(120) NOT NULL DEFAULT '',
       measurement_out VARCHAR(120) NOT NULL DEFAULT '',
-      occurrences TEXT NOT NULL,
+      occurrences TEXT NULL,
       notes TEXT NOT NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CONSTRAINT fk_sessions_patient FOREIGN KEY (patient_id) REFERENCES patients(id),
@@ -110,10 +110,10 @@ export async function ensureSchema() {
     ["procedure_type", "VARCHAR(120) NOT NULL DEFAULT '' AFTER performed_at"],
     ["measurement_in", "VARCHAR(120) NOT NULL DEFAULT '' AFTER procedure_type"],
     ["measurement_out", "VARCHAR(120) NOT NULL DEFAULT '' AFTER measurement_in"],
-    ["occurrences", "TEXT NOT NULL AFTER measurement_out"],
+    ["occurrences", "TEXT NULL AFTER measurement_out"],
   ] as const;
   for (const [column, definition] of sessionColumns) {
-    const [existing] = await pool.execute<RowDataPacket[]>("SHOW COLUMNS FROM sessions LIKE ?", [column]);
+    const [existing] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sessions' AND COLUMN_NAME = ?", [column]);
     if (!existing.length) await pool.execute(`ALTER TABLE sessions ADD COLUMN ${column} ${definition}`);
   }
   schemaReady = true;
