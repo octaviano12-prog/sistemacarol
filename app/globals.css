@@ -382,6 +382,21 @@ tbody tr:hover { transform: translateX(2px); }
 .calendar-blocked { border-color: #a67a2d; background: #fff1c9; color: #6d5019; }
 .calendar-backup { border-color: #7950b7; background: #eee7ff; color: #56368a; }
 
+.session-cycle-divider {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  border-radius: 14px;
+  border: 1px solid #cfe2d8;
+  background: linear-gradient(135deg, #e8f5ee, #f8fbf9);
+  padding: 10px 14px;
+  color: #07533f;
+}
+.session-cycle-divider span { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+.session-cycle-divider small { color: #678075; font-size: 11px; }
+
 .pwa-install {
   position: fixed;
   right: 18px;
