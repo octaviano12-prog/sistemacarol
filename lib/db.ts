@@ -89,6 +89,17 @@ export async function ensureSchema() {
       CONSTRAINT fk_appointments_patient FOREIGN KEY (patient_id) REFERENCES patients(id),
       INDEX idx_appointments_owner_date (owner_id, scheduled_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    `CREATE TABLE IF NOT EXISTS expenses (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      owner_id VARCHAR(191) NOT NULL,
+      description VARCHAR(191) NOT NULL,
+      category VARCHAR(80) NOT NULL DEFAULT 'Outros',
+      amount_cents INT UNSIGNED NOT NULL,
+      paid_at DATE NOT NULL,
+      notes TEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_expenses_owner_date (owner_id, paid_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   ];
   for (const statement of statements) await pool.execute(statement);
   schemaReady = true;

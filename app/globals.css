@@ -112,6 +112,14 @@ body {
   box-shadow: 0 22px 55px rgba(29, 70, 55, .09), 0 3px 10px rgba(29, 70, 55, .05);
 }
 
+.login-pattern {
+  background-image:
+    linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: linear-gradient(to bottom right, black, transparent 78%);
+}
+
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 ::selection { background: #bfe2d2; color: #063d2f; }

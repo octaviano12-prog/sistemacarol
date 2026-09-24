@@ -70,7 +70,8 @@ async function loadClinic(ownerId: string) {
   const sessionRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, performed_at AS performedAt, notes, created_at AS createdAt FROM sessions WHERE owner_id = ? ORDER BY performed_at DESC, id DESC", [ownerId]);
   const paymentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, amount_cents AS amountCents, method, paid_at AS paidAt, notes, created_at AS createdAt FROM payments WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
   const appointmentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, scheduled_at AS scheduledAt, duration_minutes AS durationMinutes, status, notes, created_at AS createdAt FROM appointments WHERE owner_id = ? ORDER BY scheduled_at", [ownerId]);
-  return { patients: patientRows.map(mapDates), packages: packageRows.map(mapDates), sessions: sessionRows.map(mapDates), payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates) };
+  const expenseRows = await rows<RowDataPacket[]>("SELECT id, description, category, amount_cents AS amountCents, paid_at AS paidAt, notes, created_at AS createdAt FROM expenses WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
+  return { patients: patientRows.map(mapDates), packages: packageRows.map(mapDates), sessions: sessionRows.map(mapDates), payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), expenses: expenseRows.map(mapDates) };
 }
 
 async function refreshPackagePayment(packageId: number, ownerId: string) {
@@ -184,6 +185,12 @@ export async function POST(request: Request) {
       await pool.execute("UPDATE appointments SET status = ? WHERE id = ? AND owner_id = ?", [status, id, ownerId]);
     } else if (action === "appointment.delete") {
       await pool.execute("DELETE FROM appointments WHERE id = ? AND owner_id = ?", [Number(body.id), ownerId]);
+    } else if (action === "expense.create") {
+      const description = String(body.description || "").trim(); const amountCents = Math.round(Number(body.amount || 0) * 100);
+      if (!description || amountCents <= 0) return Response.json({ error: "Informe a descrição e um valor válido." }, { status: 400 });
+      await pool.execute("INSERT INTO expenses (owner_id, description, category, amount_cents, paid_at, notes) VALUES (?, ?, ?, ?, ?, ?)", [ownerId, description, String(body.category || "Outros"), amountCents, String(body.paidAt || today()), String(body.notes || "")]);
+    } else if (action === "expense.delete") {
+      await pool.execute("DELETE FROM expenses WHERE id = ? AND owner_id = ?", [Number(body.id), ownerId]);
     } else return Response.json({ error: "Ação inválida." }, { status: 400 });
     return Response.json(await loadClinic(ownerId));
   } catch (error) {
