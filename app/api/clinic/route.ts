@@ -58,7 +58,7 @@ async function seedIfEmpty(ownerId: string) {
 
 function mapDates(row: Record<string, unknown>) {
   const result = { ...row };
-  for (const key of ["createdAt", "updatedAt", "voidedAt", "purchasedAt", "lastPaymentAt", "performedAt", "paidAt", "scheduledAt"]) {
+  for (const key of ["createdAt", "updatedAt", "voidedAt", "purchasedAt", "lastPaymentAt", "paymentDueDate", "performedAt", "paidAt", "scheduledAt"]) {
     const value = result[key];
     if (value instanceof Date) result[key] = value.toISOString().slice(0, key === "scheduledAt" ? 16 : 10);
   }
@@ -67,7 +67,7 @@ function mapDates(row: Record<string, unknown>) {
 
 async function loadClinic(ownerId: string) {
   const patientRows = await rows<RowDataPacket[]>("SELECT id, name, phone, email, birth_date AS birthDate, notes, active, created_at AS createdAt FROM patients WHERE owner_id = ? ORDER BY name", [ownerId]);
-  const packageRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, name, total_sessions AS totalSessions, total_amount_cents AS totalAmountCents, paid_amount_cents AS paidAmountCents, payment_method AS paymentMethod, payment_status AS paymentStatus, purchased_at AS purchasedAt, last_payment_at AS lastPaymentAt, status, created_at AS createdAt FROM packages WHERE owner_id = ? ORDER BY purchased_at DESC, id DESC", [ownerId]);
+  const packageRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, name, total_sessions AS totalSessions, total_amount_cents AS totalAmountCents, paid_amount_cents AS paidAmountCents, payment_method AS paymentMethod, payment_status AS paymentStatus, purchased_at AS purchasedAt, last_payment_at AS lastPaymentAt, payment_due_date AS paymentDueDate, status, created_at AS createdAt FROM packages WHERE owner_id = ? ORDER BY purchased_at DESC, id DESC", [ownerId]);
   const sessionRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes, updated_at AS updatedAt, created_at AS createdAt FROM sessions WHERE owner_id = ? AND voided_at IS NULL ORDER BY performed_at DESC, id DESC", [ownerId]);
   const paymentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, amount_cents AS amountCents, method, paid_at AS paidAt, notes, created_at AS createdAt FROM payments WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
   const appointmentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, scheduled_at AS scheduledAt, duration_minutes AS durationMinutes, status, notes, created_at AS createdAt FROM appointments WHERE owner_id = ? ORDER BY scheduled_at", [ownerId]);
@@ -75,7 +75,7 @@ async function loadClinic(ownerId: string) {
   const mappedPackages = packageRows.map(mapDates);
   const mappedSessions = sessionRows.map(mapDates);
   const coverage = calculateSessionCoverage(
-    mappedPackages.map((pkg) => ({ id: Number(pkg.id), totalSessions: Number(pkg.totalSessions), totalAmountCents: Number(pkg.totalAmountCents), paidAmountCents: Number(pkg.paidAmountCents) })),
+    mappedPackages.map((pkg) => ({ id: Number(pkg.id), totalSessions: Number(pkg.totalSessions), totalAmountCents: Number(pkg.totalAmountCents), paidAmountCents: Number(pkg.paidAmountCents), paymentDueDate: pkg.paymentDueDate ? String(pkg.paymentDueDate) : null })),
     mappedSessions.map((session) => ({ id: Number(session.id), packageId: Number(session.packageId), performedAt: String(session.performedAt) })),
   );
   const sessionsWithCoverage = mappedSessions.map((session) => ({ ...session, ...coverage.get(Number(session.id)) }));
@@ -141,11 +141,11 @@ export async function POST(request: Request) {
       const patientId = Number(body.patientId); const totalSessions = Number(body.totalSessions);
       if (!patientId || totalSessions < 1) return Response.json({ error: "Escolha o paciente e informe as sessões." }, { status: 400 });
       const total = Math.round(Number(body.totalAmount || 0) * 100); const paid = Math.round(Number(body.paidAmount || 0) * 100);
-      const purchasedAt = String(body.purchasedAt || today()); const method = String(body.paymentMethod || "Não informado");
+      const purchasedAt = String(body.purchasedAt || today()); const method = String(body.paymentMethod || "Não informado"); const paymentDueDate = body.paymentDueDate ? String(body.paymentDueDate) : null;
       const connection = await pool.getConnection();
       try {
         await connection.beginTransaction();
-        const [created] = await connection.execute<ResultSetHeader>("INSERT INTO packages (owner_id, patient_id, name, total_sessions, total_amount_cents, paid_amount_cents, payment_method, payment_status, purchased_at, last_payment_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, String(body.name || `Pacote de ${totalSessions} sessões`), totalSessions, total, paid, method, paid <= 0 ? "Pendente" : paid >= total ? "Pago" : "Parcial", purchasedAt, paid > 0 ? purchasedAt : null]);
+        const [created] = await connection.execute<ResultSetHeader>("INSERT INTO packages (owner_id, patient_id, name, total_sessions, total_amount_cents, paid_amount_cents, payment_method, payment_status, purchased_at, last_payment_at, payment_due_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, String(body.name || `Pacote de ${totalSessions} sessões`), totalSessions, total, paid, method, paid <= 0 ? "Pendente" : paid >= total ? "Pago" : "Parcial", purchasedAt, paid > 0 ? purchasedAt : null, paymentDueDate]);
         if (paid > 0) await connection.execute("INSERT INTO payments (owner_id, patient_id, package_id, amount_cents, method, paid_at, notes) VALUES (?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, created.insertId, paid, method, purchasedAt, "Pagamento inicial do pacote"]);
         await connection.commit();
       } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
@@ -185,6 +185,10 @@ export async function POST(request: Request) {
       const id = Number(body.id); const name = String(body.name || "").trim();
       if (!id || !name) return Response.json({ error: "Paciente inválido." }, { status: 400 });
       await pool.execute("UPDATE patients SET name = ?, phone = ?, email = ?, notes = ? WHERE id = ? AND owner_id = ?", [name, String(body.phone || ""), String(body.email || ""), String(body.notes || ""), id, ownerId]);
+    } else if (action === "package.dueDate") {
+      const id = Number(body.id); const paymentDueDate = String(body.paymentDueDate || "");
+      if (!id || !paymentDueDate) return Response.json({ error: "Informe uma data de vencimento válida." }, { status: 400 });
+      await pool.execute("UPDATE packages SET payment_due_date = ? WHERE id = ? AND owner_id = ?", [paymentDueDate, id, ownerId]);
     } else if (action === "patient.delete") {
       const id = Number(body.id);
       const connection = await pool.getConnection();

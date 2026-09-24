@@ -46,6 +46,7 @@ export async function ensureSchema() {
       payment_status VARCHAR(30) NOT NULL DEFAULT 'Pendente',
       purchased_at DATE NOT NULL,
       last_payment_at DATE NULL,
+      payment_due_date DATE NULL,
       status VARCHAR(30) NOT NULL DEFAULT 'Em andamento',
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CONSTRAINT fk_packages_patient FOREIGN KEY (patient_id) REFERENCES patients(id),
@@ -132,6 +133,9 @@ export async function ensureSchema() {
     const [existing] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sessions' AND COLUMN_NAME = ?", [column]);
     if (!existing.length) await pool.execute(`ALTER TABLE sessions ADD COLUMN ${column} ${definition}`);
   }
+  const [dueDateColumn] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'packages' AND COLUMN_NAME = 'payment_due_date'");
+  if (!dueDateColumn.length) await pool.execute("ALTER TABLE packages ADD COLUMN payment_due_date DATE NULL AFTER last_payment_at");
+  await pool.execute("UPDATE packages SET payment_due_date = DATE_ADD(purchased_at, INTERVAL 30 DAY) WHERE payment_due_date IS NULL");
   schemaReady = true;
 }
 

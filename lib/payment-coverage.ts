@@ -3,6 +3,7 @@ export type PackageForCoverage = {
   totalSessions: number;
   totalAmountCents: number;
   paidAmountCents: number;
+  paymentDueDate?: string | Date | null;
 };
 
 export type SessionForCoverage = {
@@ -15,7 +16,9 @@ export type SessionCoverage = {
   sessionValueCents: number;
   coveredAmountCents: number;
   outstandingAmountCents: number;
-  paymentStatus: "Paga" | "Parcial" | "Pendente";
+  paymentStatus: "Paga" | "Pendente" | "Vencida";
+  isPartialPayment: boolean;
+  paymentDueDate: string | null;
 };
 
 /**
@@ -23,7 +26,7 @@ export type SessionCoverage = {
  * pagamentos parciais visíveis e deixa qualquer saldo excedente como crédito
  * para sessões futuras, sem impedir novos atendimentos.
  */
-export function calculateSessionCoverage(packages: PackageForCoverage[], sessions: SessionForCoverage[]) {
+export function calculateSessionCoverage(packages: PackageForCoverage[], sessions: SessionForCoverage[], todayKey = new Date().toISOString().slice(0, 10)) {
   const coverage = new Map<number, SessionCoverage>();
 
   for (const pkg of packages) {
@@ -40,12 +43,13 @@ export function calculateSessionCoverage(packages: PackageForCoverage[], session
       const sessionValueCents = baseValue + (index < extraCents ? 1 : 0);
       const coveredAmountCents = Math.min(credit, sessionValueCents);
       const outstandingAmountCents = Math.max(0, sessionValueCents - coveredAmountCents);
+      const dueDate = pkg.paymentDueDate ? String(pkg.paymentDueDate).slice(0, 10) : "";
       const paymentStatus = sessionValueCents === 0 || coveredAmountCents >= sessionValueCents
         ? "Paga"
-        : coveredAmountCents > 0
-          ? "Parcial"
+        : dueDate && dueDate < todayKey
+          ? "Vencida"
           : "Pendente";
-      coverage.set(session.id, { sessionValueCents, coveredAmountCents, outstandingAmountCents, paymentStatus });
+      coverage.set(session.id, { sessionValueCents, coveredAmountCents, outstandingAmountCents, paymentStatus, isPartialPayment: coveredAmountCents > 0 && outstandingAmountCents > 0, paymentDueDate: dueDate || null });
       credit = Math.max(0, credit - coveredAmountCents);
     });
   }
