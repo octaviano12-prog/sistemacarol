@@ -73,11 +73,32 @@ async function loadClinic(ownerId: string) {
   return { patients: patientRows.map(mapDates), packages: packageRows.map(mapDates), sessions: sessionRows.map(mapDates), payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates) };
 }
 
+async function refreshPackagePayment(packageId: number, ownerId: string) {
+  const pool = getPool();
+  const totals = await rows<(RowDataPacket & { paid: number; total: number })[]>(
+    `SELECT COALESCE(SUM(pay.amount_cents), 0) AS paid, pkg.total_amount_cents AS total
+     FROM packages pkg
+     LEFT JOIN payments pay ON pay.package_id = pkg.id AND pay.owner_id = pkg.owner_id
+     WHERE pkg.id = ? AND pkg.owner_id = ?
+     GROUP BY pkg.id, pkg.total_amount_cents`,
+    [packageId, ownerId],
+  );
+  if (!totals.length) return;
+  const paid = Number(totals[0].paid);
+  const status = paid <= 0 ? "Pendente" : paid >= Number(totals[0].total) ? "Pago" : "Parcial";
+  await pool.execute(
+    `UPDATE packages SET paid_amount_cents = ?, payment_status = ?,
+     last_payment_at = (SELECT MAX(paid_at) FROM payments WHERE package_id = ? AND owner_id = ?)
+     WHERE id = ? AND owner_id = ?`,
+    [paid, status, packageId, ownerId, packageId, ownerId],
+  );
+}
+
 export async function GET(request: Request) {
   try {
     await ensureSchema();
     const ownerId = ownerFrom(request);
-    await seedIfEmpty(ownerId);
+    if (process.env.SEED_DEMO_DATA === "true") await seedIfEmpty(ownerId);
     return Response.json(await loadClinic(ownerId));
   } catch (error) {
     console.error(error);
@@ -100,7 +121,14 @@ export async function POST(request: Request) {
       const patientId = Number(body.patientId); const totalSessions = Number(body.totalSessions);
       if (!patientId || totalSessions < 1) return Response.json({ error: "Escolha o paciente e informe as sessões." }, { status: 400 });
       const total = Math.round(Number(body.totalAmount || 0) * 100); const paid = Math.round(Number(body.paidAmount || 0) * 100);
-      await pool.execute("INSERT INTO packages (owner_id, patient_id, name, total_sessions, total_amount_cents, paid_amount_cents, payment_method, payment_status, purchased_at, last_payment_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, String(body.name || `Pacote de ${totalSessions} sessões`), totalSessions, total, paid, String(body.paymentMethod || "Não informado"), paid <= 0 ? "Pendente" : paid >= total ? "Pago" : "Parcial", String(body.purchasedAt || today()), paid > 0 ? String(body.purchasedAt || today()) : null]);
+      const purchasedAt = String(body.purchasedAt || today()); const method = String(body.paymentMethod || "Não informado");
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        const [created] = await connection.execute<ResultSetHeader>("INSERT INTO packages (owner_id, patient_id, name, total_sessions, total_amount_cents, paid_amount_cents, payment_method, payment_status, purchased_at, last_payment_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, String(body.name || `Pacote de ${totalSessions} sessões`), totalSessions, total, paid, method, paid <= 0 ? "Pendente" : paid >= total ? "Pago" : "Parcial", purchasedAt, paid > 0 ? purchasedAt : null]);
+        if (paid > 0) await connection.execute("INSERT INTO payments (owner_id, patient_id, package_id, amount_cents, method, paid_at, notes) VALUES (?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, created.insertId, paid, method, purchasedAt, "Pagamento inicial do pacote"]);
+        await connection.commit();
+      } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
     } else if (action === "session.create") {
       const packageId = Number(body.packageId);
       const packages = await rows<(RowDataPacket & { id: number; patientId: number; totalSessions: number })[]>("SELECT id, patient_id AS patientId, total_sessions AS totalSessions FROM packages WHERE id = ? AND owner_id = ? LIMIT 1", [packageId, ownerId]);
@@ -120,6 +148,42 @@ export async function POST(request: Request) {
       const patientId = Number(body.patientId); const scheduledAt = String(body.scheduledAt || "").replace("T", " ");
       if (!patientId || !scheduledAt) return Response.json({ error: "Escolha o paciente e a data." }, { status: 400 });
       await pool.execute("INSERT INTO appointments (owner_id, patient_id, scheduled_at, duration_minutes, notes) VALUES (?, ?, ?, ?, ?)", [ownerId, patientId, scheduledAt, Number(body.durationMinutes || 50), String(body.notes || "")]);
+    } else if (action === "patient.update") {
+      const id = Number(body.id); const name = String(body.name || "").trim();
+      if (!id || !name) return Response.json({ error: "Paciente inválido." }, { status: 400 });
+      await pool.execute("UPDATE patients SET name = ?, phone = ?, email = ?, notes = ? WHERE id = ? AND owner_id = ?", [name, String(body.phone || ""), String(body.email || ""), String(body.notes || ""), id, ownerId]);
+    } else if (action === "patient.delete") {
+      const id = Number(body.id);
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        await connection.execute("DELETE FROM appointments WHERE patient_id = ? AND owner_id = ?", [id, ownerId]);
+        await connection.execute("DELETE FROM payments WHERE patient_id = ? AND owner_id = ?", [id, ownerId]);
+        await connection.execute("DELETE FROM sessions WHERE patient_id = ? AND owner_id = ?", [id, ownerId]);
+        await connection.execute("DELETE FROM packages WHERE patient_id = ? AND owner_id = ?", [id, ownerId]);
+        await connection.execute("DELETE FROM patients WHERE id = ? AND owner_id = ?", [id, ownerId]);
+        await connection.commit();
+      } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
+    } else if (action === "package.delete") {
+      const id = Number(body.id);
+      await pool.execute("DELETE FROM payments WHERE package_id = ? AND owner_id = ?", [id, ownerId]);
+      await pool.execute("DELETE FROM sessions WHERE package_id = ? AND owner_id = ?", [id, ownerId]);
+      await pool.execute("DELETE FROM packages WHERE id = ? AND owner_id = ?", [id, ownerId]);
+    } else if (action === "session.delete") {
+      const id = Number(body.id);
+      const found = await rows<(RowDataPacket & { packageId: number })[]>("SELECT package_id AS packageId FROM sessions WHERE id = ? AND owner_id = ?", [id, ownerId]);
+      await pool.execute("DELETE FROM sessions WHERE id = ? AND owner_id = ?", [id, ownerId]);
+      if (found.length) await pool.execute("UPDATE packages SET status = 'Em andamento' WHERE id = ? AND owner_id = ?", [found[0].packageId, ownerId]);
+    } else if (action === "payment.delete") {
+      const id = Number(body.id);
+      const found = await rows<(RowDataPacket & { packageId: number })[]>("SELECT package_id AS packageId FROM payments WHERE id = ? AND owner_id = ?", [id, ownerId]);
+      await pool.execute("DELETE FROM payments WHERE id = ? AND owner_id = ?", [id, ownerId]);
+      if (found.length) await refreshPackagePayment(found[0].packageId, ownerId);
+    } else if (action === "appointment.status") {
+      const id = Number(body.id); const status = String(body.status || "Agendado");
+      await pool.execute("UPDATE appointments SET status = ? WHERE id = ? AND owner_id = ?", [status, id, ownerId]);
+    } else if (action === "appointment.delete") {
+      await pool.execute("DELETE FROM appointments WHERE id = ? AND owner_id = ?", [Number(body.id), ownerId]);
     } else return Response.json({ error: "Ação inválida." }, { status: 400 });
     return Response.json(await loadClinic(ownerId));
   } catch (error) {
