@@ -1,5 +1,6 @@
 import { ResultSetHeader, RowDataPacket } from "mysql2";
 import { ensureSchema, getPool, rows } from "@/lib/db";
+import { calculateSessionCoverage } from "@/lib/payment-coverage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -71,7 +72,14 @@ async function loadClinic(ownerId: string) {
   const paymentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, amount_cents AS amountCents, method, paid_at AS paidAt, notes, created_at AS createdAt FROM payments WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
   const appointmentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, scheduled_at AS scheduledAt, duration_minutes AS durationMinutes, status, notes, created_at AS createdAt FROM appointments WHERE owner_id = ? ORDER BY scheduled_at", [ownerId]);
   const expenseRows = await rows<RowDataPacket[]>("SELECT id, description, category, amount_cents AS amountCents, paid_at AS paidAt, notes, created_at AS createdAt FROM expenses WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
-  return { patients: patientRows.map(mapDates), packages: packageRows.map(mapDates), sessions: sessionRows.map(mapDates), payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), expenses: expenseRows.map(mapDates) };
+  const mappedPackages = packageRows.map(mapDates);
+  const mappedSessions = sessionRows.map(mapDates);
+  const coverage = calculateSessionCoverage(
+    mappedPackages.map((pkg) => ({ id: Number(pkg.id), totalSessions: Number(pkg.totalSessions), totalAmountCents: Number(pkg.totalAmountCents), paidAmountCents: Number(pkg.paidAmountCents) })),
+    mappedSessions.map((session) => ({ id: Number(session.id), packageId: Number(session.packageId), performedAt: String(session.performedAt) })),
+  );
+  const sessionsWithCoverage = mappedSessions.map((session) => ({ ...session, ...coverage.get(Number(session.id)) }));
+  return { patients: patientRows.map(mapDates), packages: mappedPackages, sessions: sessionsWithCoverage, payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), expenses: expenseRows.map(mapDates) };
 }
 
 async function logAction(ownerId: string, entityType: string, entityId: number, action: string, details = "") {
@@ -166,7 +174,13 @@ export async function POST(request: Request) {
     } else if (action === "appointment.create") {
       const patientId = Number(body.patientId); const scheduledAt = String(body.scheduledAt || "").replace("T", " ");
       if (!patientId || !scheduledAt) return Response.json({ error: "Escolha o paciente e a data." }, { status: 400 });
-      await pool.execute("INSERT INTO appointments (owner_id, patient_id, scheduled_at, duration_minutes, notes) VALUES (?, ?, ?, ?, ?)", [ownerId, patientId, scheduledAt, Number(body.durationMinutes || 50), String(body.notes || "")]);
+      const durationMinutes = Math.max(10, Number(body.durationMinutes || 50));
+      const conflicts = await rows<RowDataPacket[]>(`SELECT id FROM appointments
+        WHERE owner_id = ? AND status NOT IN ('Cancelado', 'Faltou')
+        AND scheduled_at < DATE_ADD(?, INTERVAL ? MINUTE)
+        AND DATE_ADD(scheduled_at, INTERVAL duration_minutes MINUTE) > ? LIMIT 1`, [ownerId, scheduledAt, durationMinutes, scheduledAt]);
+      if (conflicts.length) return Response.json({ error: "Este horário já está ocupado. Escolha um horário livre na agenda." }, { status: 409 });
+      await pool.execute("INSERT INTO appointments (owner_id, patient_id, scheduled_at, duration_minutes, notes) VALUES (?, ?, ?, ?, ?)", [ownerId, patientId, scheduledAt, durationMinutes, String(body.notes || "")]);
     } else if (action === "patient.update") {
       const id = Number(body.id); const name = String(body.name || "").trim();
       if (!id || !name) return Response.json({ error: "Paciente inválido." }, { status: 400 });

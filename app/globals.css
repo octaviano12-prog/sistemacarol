@@ -290,6 +290,107 @@ tbody tr:hover { transform: translateX(2px); }
 .login-card:hover { transform: perspective(1200px) rotateY(0) rotateX(0) translateY(-3px); box-shadow: 0 48px 110px rgba(20,65,48,.2); }
 .login-lock { box-shadow: 0 14px 28px rgba(7,83,63,.13), 0 1px 0 white inset; animation: brand-float 4.5s ease-in-out infinite; }
 
+.agenda-hero { position: relative; isolation: isolate; }
+.agenda-hero::after {
+  position: absolute;
+  z-index: -1;
+  top: -90px;
+  right: -50px;
+  width: 240px;
+  height: 240px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 50%;
+  box-shadow: 0 0 80px rgba(234,217,165,.08) inset;
+  content: "";
+}
+
+.weekly-calendar {
+  display: grid;
+  grid-template-columns: 76px repeat(7, minmax(128px, 1fr));
+  background: #e5ebe7;
+  gap: 1px;
+}
+.calendar-corner,
+.calendar-day-head,
+.calendar-time,
+.calendar-slot { background: #fff; }
+.calendar-corner {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  min-height: 78px;
+  color: #7a8880;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.calendar-day-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  min-height: 78px;
+  color: #75837b;
+  text-transform: capitalize;
+}
+.calendar-day-head span { font-size: 12px; }
+.calendar-day-head strong { font-size: 22px; color: #20342b; }
+.calendar-day-head.is-today { background: #eaf5ef; }
+.calendar-day-head.is-today strong { color: #087052; }
+.calendar-time {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-height: 58px;
+  padding: 8px 10px;
+  color: #829087;
+  font-size: 11px;
+  text-align: center;
+}
+.calendar-slot {
+  position: relative;
+  min-height: 58px;
+  padding: 4px;
+  text-align: left;
+}
+.calendar-slot:hover { z-index: 1; background: #f2f8f5; box-shadow: 0 0 0 1px #90c2aa inset; }
+.slot-plus { display: flex; align-items: center; justify-content: center; gap: 2px; height: 100%; color: transparent; font-size: 10px; }
+.calendar-slot:hover .slot-plus { color: #5b8974; }
+.calendar-event {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  overflow: hidden;
+  border-left: 3px solid;
+  border-radius: 8px;
+  padding: 6px 7px;
+  box-shadow: 0 4px 9px rgba(36,86,65,.08);
+}
+.calendar-event strong, .calendar-event small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-event strong { font-size: 11px; }
+.calendar-event small { font-size: 9px; opacity: .72; }
+.calendar-scheduled { border-color: #167454; background: #dff2e8; color: #07533f; }
+.calendar-confirmed { border-color: #b38b30; background: #fff2cb; color: #725515; }
+.calendar-done { border-color: #536f89; background: #e7eef5; color: #3d566d; }
+.calendar-cancelled { border-color: #bd655a; background: #fae6e3; color: #913f36; }
+
+.month-weekdays,
+.month-grid { display: grid; grid-template-columns: repeat(7, minmax(100px, 1fr)); min-width: 760px; }
+.month-weekdays { border-bottom: 1px solid #e2e9e5; background: #f8faf9; }
+.month-weekdays span { padding: 12px; color: #76847c; font-size: 11px; font-weight: 700; text-align: center; text-transform: uppercase; }
+.month-grid { gap: 1px; background: #e2e9e5; }
+.month-day { min-height: 125px; background: white; padding: 10px; text-align: left; vertical-align: top; }
+.month-day:hover { position: relative; z-index: 1; background: #f2f8f5; box-shadow: 0 0 0 1px #8fbea8 inset; }
+.month-day.outside { background: #f8faf9; opacity: .52; }
+.month-day.today { box-shadow: 0 0 0 2px #178060 inset; }
+.month-number { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 50%; font-size: 12px; font-weight: 700; }
+.month-day.today .month-number { background: #087052; color: white; }
+.month-event { overflow: hidden; border-left: 3px solid; border-radius: 5px; padding: 3px 5px; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.month-free { margin-top: 8px; color: #9aa59f; font-size: 10px; }
+
 @keyframes rise-in {
   from { opacity: 0; transform: translateY(16px) scale(.992); }
   to { opacity: 1; transform: translateY(0) scale(1); }
@@ -320,6 +421,9 @@ tbody tr:hover { transform: translateX(2px); }
   .clinic-main::before { right: -80px; width: 150px; height: 150px; }
   .login-card { transform: none; }
   .login-card:hover { transform: translateY(-2px); }
+  .weekly-calendar { grid-template-columns: 62px repeat(7, 122px); }
+  .calendar-corner, .calendar-day-head { min-height: 68px; }
+  .month-day { min-height: 105px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
