@@ -445,6 +445,8 @@ tbody tr:hover { transform: translateX(2px); }
     height: 100dvh !important;
     max-height: none !important;
     transform: none !important;
+    translate: none !important;
+    scale: 1 !important;
     border-radius: 0 !important;
     padding: 22px 18px calc(22px + env(safe-area-inset-bottom)) !important;
   }
