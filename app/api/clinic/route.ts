@@ -173,7 +173,7 @@ export async function POST(request: Request) {
       const patientId = isBlock ? null : Number(body.patientId); const scheduledAt = String(body.scheduledAt || "").replace("T", " ");
       const title = isBlock ? String(body.title || "Compromisso pessoal").trim() : "";
       if ((!isBlock && !patientId) || !scheduledAt || (isBlock && !title)) return Response.json({ error: isBlock ? "Informe o compromisso, a data e o horário." : "Escolha o paciente e a data." }, { status: 400 });
-      const requestedDuration = Number(body.durationMinutes || 50);
+      const requestedDuration = isBlock ? Number(body.durationHours || 1) * 60 : Number(body.durationMinutes || 50);
       const requestedRepeatWeeks = Number(body.repeatWeeks || 1);
       const durationMinutes = Number.isFinite(requestedDuration) ? Math.min(720, Math.max(10, Math.trunc(requestedDuration))) : 50;
       const repeatWeeks = Number.isFinite(requestedRepeatWeeks) ? Math.min(52, Math.max(1, Math.trunc(requestedRepeatWeeks))) : 1;
@@ -201,11 +201,11 @@ export async function POST(request: Request) {
       }
     } else if (action === "appointment.update") {
       const id = Number(body.id); const scheduledAt = String(body.scheduledAt || "").replace("T", " ");
-      const requestedDuration = Number(body.durationMinutes || 50);
-      const durationMinutes = Number.isFinite(requestedDuration) ? Math.min(720, Math.max(10, Math.trunc(requestedDuration))) : 50;
       const found = await rows<(RowDataPacket & { patientId: number | null })[]>("SELECT patient_id AS patientId FROM appointments WHERE id = ? AND owner_id = ? LIMIT 1", [id, ownerId]);
       if (!found.length || !scheduledAt) return Response.json({ error: "Agendamento inválido." }, { status: 400 });
       const patientId = found[0].patientId;
+      const requestedDuration = patientId === null ? Number(body.durationHours || 1) * 60 : Number(body.durationMinutes || 50);
+      const durationMinutes = Number.isFinite(requestedDuration) ? Math.min(720, Math.max(10, Math.trunc(requestedDuration))) : 50;
       const title = patientId === null ? String(body.title || "Compromisso pessoal").trim() : "";
       const conflicts = await rows<RowDataPacket[]>(`SELECT id FROM appointments
         WHERE owner_id = ? AND id <> ? AND status NOT IN ('Cancelado', 'Faltou')
