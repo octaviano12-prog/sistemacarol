@@ -83,7 +83,7 @@ async function loadClinic(ownerId: string) {
     const paid = Math.min(total, Math.max(0, Number(session.standalonePaidCents)));
     const outstanding = Math.max(0, total - paid);
     const dueDate = session.standaloneDueDate ? String(session.standaloneDueDate).slice(0, 10) : null;
-    const paymentStatus = total === 0 || paid >= total ? "Paga" : dueDate && dueDate < today() ? "Vencida" : "Pendente";
+    const paymentStatus = total === 0 ? "Sem cobrança" : paid >= total ? "Paga" : dueDate && dueDate < today() ? "Vencida" : "Pendente";
     return { ...session, sessionValueCents: total, coveredAmountCents: paid, outstandingAmountCents: outstanding, paymentStatus, isPartialPayment: paid > 0 && outstanding > 0, paymentDueDate: dueDate };
   });
   return { patients: patientRows.map(mapDates), packages: mappedPackages, sessions: sessionsWithCoverage, payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), expenses: expenseRows.map(mapDates), documents: documentRows.map(mapDates), settings: { confirmationMessage: settingRows[0]?.confirmationMessage || DEFAULT_CONFIRMATION_MESSAGE } };
@@ -105,7 +105,7 @@ async function refreshPackagePayment(packageId: number, ownerId: string) {
   );
   if (!totals.length) return;
   const paid = Number(totals[0].paid);
-  const status = paid <= 0 ? "Pendente" : paid >= Number(totals[0].total) ? "Pago" : "Parcial";
+  const status = Number(totals[0].total) === 0 ? "Sem cobrança" : paid <= 0 ? "Pendente" : paid >= Number(totals[0].total) ? "Pago" : "Parcial";
   await pool.execute(
     `UPDATE packages SET paid_amount_cents = ?, payment_status = ?,
      last_payment_at = (SELECT MAX(paid_at) FROM payments WHERE package_id = ? AND owner_id = ?)
@@ -150,11 +150,12 @@ export async function POST(request: Request) {
       const patientId = Number(body.patientId); const totalSessions = Number(body.totalSessions);
       if (!patientId || totalSessions < 1) return Response.json({ error: "Escolha o paciente e informe as sessões." }, { status: 400 });
       const total = Math.round(Number(body.totalAmount || 0) * 100); const paid = Math.round(Number(body.paidAmount || 0) * 100);
+      if (!Number.isFinite(total) || total < 0 || !Number.isFinite(paid) || paid < 0 || paid > total) return Response.json({ error: "Confira o valor total e o valor pago do pacote." }, { status: 400 });
       const purchasedAt = String(body.purchasedAt || today()); const method = String(body.paymentMethod || "Não informado"); const paymentDueDate = body.paymentDueDate ? String(body.paymentDueDate) : null;
       const connection = await pool.getConnection();
       try {
         await connection.beginTransaction();
-        const [created] = await connection.execute<ResultSetHeader>("INSERT INTO packages (owner_id, patient_id, name, total_sessions, total_amount_cents, paid_amount_cents, payment_method, payment_status, purchased_at, last_payment_at, payment_due_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, String(body.name || `Pacote de ${totalSessions} sessões`), totalSessions, total, paid, method, paid <= 0 ? "Pendente" : paid >= total ? "Pago" : "Parcial", purchasedAt, paid > 0 ? purchasedAt : null, paymentDueDate]);
+        const [created] = await connection.execute<ResultSetHeader>("INSERT INTO packages (owner_id, patient_id, name, total_sessions, total_amount_cents, paid_amount_cents, payment_method, payment_status, purchased_at, last_payment_at, payment_due_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, String(body.name || `Pacote de ${totalSessions} sessões`), totalSessions, total, paid, method, total === 0 ? "Sem cobrança" : paid <= 0 ? "Pendente" : paid >= total ? "Pago" : "Parcial", purchasedAt, paid > 0 ? purchasedAt : null, paymentDueDate]);
         if (paid > 0) await connection.execute("INSERT INTO payments (owner_id, patient_id, package_id, amount_cents, method, paid_at, notes) VALUES (?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, created.insertId, paid, method, purchasedAt, "Pagamento inicial do pacote"]);
         await connection.commit();
       } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
@@ -173,7 +174,7 @@ export async function POST(request: Request) {
       if (!name || !purchasedAt || !Number.isFinite(totalSessions) || totalSessions < 1 || !Number.isFinite(totalAmountCents) || totalAmountCents < 0) return Response.json({ error: "Preencha corretamente os dados do pacote." }, { status: 400 });
       if (totalSessions < found[0].usedSessions) return Response.json({ error: `Este pacote já possui ${found[0].usedSessions} sessão(ões) realizada(s). A quantidade total não pode ser menor que isso.` }, { status: 400 });
       if (totalAmountCents < found[0].paidAmountCents) return Response.json({ error: "O valor total não pode ser menor que o valor que já foi pago." }, { status: 400 });
-      const paymentStatus = found[0].paidAmountCents <= 0 ? "Pendente" : found[0].paidAmountCents >= totalAmountCents ? "Pago" : "Parcial";
+      const paymentStatus = totalAmountCents === 0 ? "Sem cobrança" : found[0].paidAmountCents <= 0 ? "Pendente" : found[0].paidAmountCents >= totalAmountCents ? "Pago" : "Parcial";
       const status = found[0].usedSessions >= totalSessions ? "Concluído" : "Em andamento";
       await pool.execute("UPDATE packages SET name = ?, total_sessions = ?, total_amount_cents = ?, payment_method = ?, payment_status = ?, purchased_at = ?, payment_due_date = ?, status = ? WHERE id = ? AND owner_id = ?", [name, totalSessions, totalAmountCents, paymentMethod, paymentStatus, purchasedAt, paymentDueDate, status, id, ownerId]);
     } else if (action === "session.create") {

@@ -16,7 +16,7 @@ export type SessionCoverage = {
   sessionValueCents: number;
   coveredAmountCents: number;
   outstandingAmountCents: number;
-  paymentStatus: "Paga" | "Pendente" | "Vencida";
+  paymentStatus: "Paga" | "Pendente" | "Vencida" | "Sem cobrança";
   isPartialPayment: boolean;
   paymentDueDate: string | null;
 };
@@ -44,8 +44,10 @@ export function calculateSessionCoverage(packages: PackageForCoverage[], session
       const coveredAmountCents = Math.min(credit, sessionValueCents);
       const outstandingAmountCents = Math.max(0, sessionValueCents - coveredAmountCents);
       const dueDate = pkg.paymentDueDate ? String(pkg.paymentDueDate).slice(0, 10) : "";
-      const paymentStatus = sessionValueCents === 0 || coveredAmountCents >= sessionValueCents
-        ? "Paga"
+      const paymentStatus = sessionValueCents === 0
+        ? "Sem cobrança"
+        : coveredAmountCents >= sessionValueCents
+          ? "Paga"
         : dueDate && dueDate < todayKey
           ? "Vencida"
           : "Pendente";
