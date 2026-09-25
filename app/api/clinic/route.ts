@@ -1,6 +1,7 @@
 import { ResultSetHeader, RowDataPacket } from "mysql2";
 import { ensureSchema, getPool, rows } from "@/lib/db";
 import { calculateSessionCoverage } from "@/lib/payment-coverage";
+import { DEFAULT_CONFIRMATION_MESSAGE } from "@/lib/whatsapp-message";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,6 +70,7 @@ async function loadClinic(ownerId: string) {
   const appointmentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, title, scheduled_at AS scheduledAt, duration_minutes AS durationMinutes, is_backup AS isBackup, status, notes, created_at AS createdAt FROM appointments WHERE owner_id = ? ORDER BY scheduled_at", [ownerId]);
   const expenseRows = await rows<RowDataPacket[]>("SELECT id, description, category, amount_cents AS amountCents, paid_at AS paidAt, notes, created_at AS createdAt FROM expenses WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
   const documentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, name, category, mime_type AS mimeType, size_bytes AS sizeBytes, checksum_sha256 AS checksumSha256, created_at AS createdAt FROM patient_documents WHERE owner_id = ? AND deleted_at IS NULL ORDER BY created_at DESC, id DESC", [ownerId]);
+  const settingRows = await rows<(RowDataPacket & { confirmationMessage: string })[]>("SELECT whatsapp_confirmation_template AS confirmationMessage FROM clinic_settings WHERE owner_id = ? LIMIT 1", [ownerId]);
   const mappedPackages = packageRows.map(mapDates);
   const mappedSessions = sessionRows.map(mapDates);
   const coverage = calculateSessionCoverage(
@@ -76,7 +78,7 @@ async function loadClinic(ownerId: string) {
     mappedSessions.map((session) => ({ id: Number(session.id), packageId: Number(session.packageId), performedAt: String(session.performedAt) })),
   );
   const sessionsWithCoverage = mappedSessions.map((session) => ({ ...session, ...coverage.get(Number(session.id)) }));
-  return { patients: patientRows.map(mapDates), packages: mappedPackages, sessions: sessionsWithCoverage, payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), expenses: expenseRows.map(mapDates), documents: documentRows.map(mapDates) };
+  return { patients: patientRows.map(mapDates), packages: mappedPackages, sessions: sessionsWithCoverage, payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), expenses: expenseRows.map(mapDates), documents: documentRows.map(mapDates), settings: { confirmationMessage: settingRows[0]?.confirmationMessage || DEFAULT_CONFIRMATION_MESSAGE } };
 }
 
 async function logAction(ownerId: string, entityType: string, entityId: number, action: string, details = "") {
@@ -289,6 +291,11 @@ export async function POST(request: Request) {
       await pool.execute("UPDATE appointments SET status = ? WHERE id = ? AND owner_id = ?", [status, id, ownerId]);
     } else if (action === "appointment.delete") {
       await pool.execute("DELETE FROM appointments WHERE id = ? AND owner_id = ?", [Number(body.id), ownerId]);
+    } else if (action === "settings.confirmation-message.update") {
+      const confirmationMessage = String(body.confirmationMessage || "").trim();
+      if (!confirmationMessage || confirmationMessage.length > 2000) return Response.json({ error: "Escreva uma mensagem com até 2.000 caracteres." }, { status: 400 });
+      await pool.execute("INSERT INTO clinic_settings (owner_id, whatsapp_confirmation_template) VALUES (?, ?) ON DUPLICATE KEY UPDATE whatsapp_confirmation_template = VALUES(whatsapp_confirmation_template)", [ownerId, confirmationMessage]);
+      await logAction(ownerId, "settings", 0, "confirmation_message_updated", "Mensagem de confirmação do WhatsApp atualizada");
     } else if (action === "expense.create") {
       const description = String(body.description || "").trim(); const amountCents = Math.round(Number(body.amount || 0) * 100);
       if (!description || amountCents <= 0) return Response.json({ error: "Informe a descrição e um valor válido." }, { status: 400 });

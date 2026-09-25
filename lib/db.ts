@@ -121,6 +121,11 @@ export async function ensureSchema() {
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_audit_owner_entity (owner_id, entity_type, entity_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    `CREATE TABLE IF NOT EXISTS clinic_settings (
+      owner_id VARCHAR(191) NOT NULL PRIMARY KEY,
+      whatsapp_confirmation_template TEXT NOT NULL,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     `CREATE TABLE IF NOT EXISTS patient_documents (
       id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
       owner_id VARCHAR(191) NOT NULL,
