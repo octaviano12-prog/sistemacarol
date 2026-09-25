@@ -65,7 +65,7 @@ function mapDates(row: Record<string, unknown>) {
 async function loadClinic(ownerId: string) {
   const patientRows = await rows<RowDataPacket[]>("SELECT id, name, phone, email, COALESCE(profile_photo, '') AS profilePhoto, birth_date AS birthDate, notes, active, created_at AS createdAt FROM patients WHERE owner_id = ? ORDER BY name", [ownerId]);
   const packageRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, name, total_sessions AS totalSessions, total_amount_cents AS totalAmountCents, paid_amount_cents AS paidAmountCents, payment_method AS paymentMethod, payment_status AS paymentStatus, purchased_at AS purchasedAt, last_payment_at AS lastPaymentAt, payment_due_date AS paymentDueDate, status, created_at AS createdAt FROM packages WHERE owner_id = ? ORDER BY purchased_at DESC, id DESC", [ownerId]);
-  const sessionRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes, updated_at AS updatedAt, created_at AS createdAt FROM sessions WHERE owner_id = ? AND voided_at IS NULL ORDER BY performed_at DESC, id DESC", [ownerId]);
+  const sessionRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, session_kind AS sessionKind, standalone_amount_cents AS standaloneAmountCents, standalone_paid_cents AS standalonePaidCents, standalone_payment_method AS standalonePaymentMethod, standalone_due_date AS standaloneDueDate, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes, updated_at AS updatedAt, created_at AS createdAt FROM sessions WHERE owner_id = ? AND voided_at IS NULL ORDER BY performed_at DESC, id DESC", [ownerId]);
   const paymentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, amount_cents AS amountCents, method, paid_at AS paidAt, notes, created_at AS createdAt FROM payments WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
   const appointmentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, title, scheduled_at AS scheduledAt, duration_minutes AS durationMinutes, is_backup AS isBackup, status, notes, created_at AS createdAt FROM appointments WHERE owner_id = ? ORDER BY scheduled_at", [ownerId]);
   const expenseRows = await rows<RowDataPacket[]>("SELECT id, description, category, amount_cents AS amountCents, paid_at AS paidAt, notes, created_at AS createdAt FROM expenses WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
@@ -75,9 +75,17 @@ async function loadClinic(ownerId: string) {
   const mappedSessions = sessionRows.map(mapDates);
   const coverage = calculateSessionCoverage(
     mappedPackages.map((pkg) => ({ id: Number(pkg.id), totalSessions: Number(pkg.totalSessions), totalAmountCents: Number(pkg.totalAmountCents), paidAmountCents: Number(pkg.paidAmountCents), paymentDueDate: pkg.paymentDueDate ? String(pkg.paymentDueDate) : null })),
-    mappedSessions.map((session) => ({ id: Number(session.id), packageId: Number(session.packageId), performedAt: String(session.performedAt) })),
+    mappedSessions.filter((session) => session.packageId !== null).map((session) => ({ id: Number(session.id), packageId: Number(session.packageId), performedAt: String(session.performedAt) })),
   );
-  const sessionsWithCoverage = mappedSessions.map((session) => ({ ...session, ...coverage.get(Number(session.id)) }));
+  const sessionsWithCoverage = mappedSessions.map((session) => {
+    if (session.packageId !== null) return { ...session, ...coverage.get(Number(session.id)) };
+    const total = Math.max(0, Number(session.standaloneAmountCents));
+    const paid = Math.min(total, Math.max(0, Number(session.standalonePaidCents)));
+    const outstanding = Math.max(0, total - paid);
+    const dueDate = session.standaloneDueDate ? String(session.standaloneDueDate).slice(0, 10) : null;
+    const paymentStatus = total === 0 || paid >= total ? "Paga" : dueDate && dueDate < today() ? "Vencida" : "Pendente";
+    return { ...session, sessionValueCents: total, coveredAmountCents: paid, outstandingAmountCents: outstanding, paymentStatus, isPartialPayment: paid > 0 && outstanding > 0, paymentDueDate: dueDate };
+  });
   return { patients: patientRows.map(mapDates), packages: mappedPackages, sessions: sessionsWithCoverage, payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), expenses: expenseRows.map(mapDates), documents: documentRows.map(mapDates), settings: { confirmationMessage: settingRows[0]?.confirmationMessage || DEFAULT_CONFIRMATION_MESSAGE } };
 }
 
@@ -113,7 +121,7 @@ export async function GET(request: Request) {
     await removeLegacyDemoData(ownerId);
     const clinic = await loadClinic(ownerId);
     if (new URL(request.url).searchParams.get("export") === "backup") {
-      const voidedSessions = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes, updated_at AS updatedAt, voided_at AS voidedAt, void_reason AS voidReason, created_at AS createdAt FROM sessions WHERE owner_id = ? AND voided_at IS NOT NULL ORDER BY id", [ownerId]);
+      const voidedSessions = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, session_kind AS sessionKind, standalone_amount_cents AS standaloneAmountCents, standalone_paid_cents AS standalonePaidCents, standalone_payment_method AS standalonePaymentMethod, standalone_due_date AS standaloneDueDate, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes, updated_at AS updatedAt, voided_at AS voidedAt, void_reason AS voidReason, created_at AS createdAt FROM sessions WHERE owner_id = ? AND voided_at IS NOT NULL ORDER BY id", [ownerId]);
       const auditLogs = await rows<RowDataPacket[]>("SELECT entity_type AS entityType, entity_id AS entityId, action, details, created_at AS createdAt FROM audit_logs WHERE owner_id = ? ORDER BY id", [ownerId]);
       const documentFiles = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, name, category, mime_type AS mimeType, size_bytes AS sizeBytes, checksum_sha256 AS checksumSha256, TO_BASE64(content) AS contentBase64, deleted_at AS deletedAt, created_at AS createdAt FROM patient_documents WHERE owner_id = ? ORDER BY id", [ownerId]);
       const filename = `backup-clinica-${today()}.json`;
@@ -170,6 +178,16 @@ export async function POST(request: Request) {
       await pool.execute("UPDATE packages SET name = ?, total_sessions = ?, total_amount_cents = ?, payment_method = ?, payment_status = ?, purchased_at = ?, payment_due_date = ?, status = ? WHERE id = ? AND owner_id = ?", [name, totalSessions, totalAmountCents, paymentMethod, paymentStatus, purchasedAt, paymentDueDate, status, id, ownerId]);
     } else if (action === "session.create") {
       const packageId = Number(body.packageId);
+      const sessionKind = String(body.sessionKind || "package") === "standalone" ? "standalone" : "package";
+      if (sessionKind === "standalone") {
+        const patientId = Number(body.patientId);
+        const total = Math.round(Number(body.standaloneAmount || 0) * 100);
+        const paid = Math.round(Number(body.standalonePaidAmount || 0) * 100);
+        if (!patientId) return Response.json({ error: "Escolha o paciente da sessão avulsa." }, { status: 400 });
+        if (!Number.isFinite(total) || total < 0 || !Number.isFinite(paid) || paid < 0 || paid > total) return Response.json({ error: "Confira o valor da sessão e o valor pago." }, { status: 400 });
+        const [created] = await pool.execute<ResultSetHeader>("INSERT INTO sessions (owner_id, patient_id, package_id, session_kind, standalone_amount_cents, standalone_paid_cents, standalone_payment_method, standalone_due_date, performed_at, procedure_type, measurement_in, measurement_out, occurrences, notes) VALUES (?, ?, NULL, 'standalone', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, total, paid, String(body.standalonePaymentMethod || "Não informado"), body.standaloneDueDate ? String(body.standaloneDueDate) : null, String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || "")]);
+        await logAction(ownerId, "session", created.insertId, "created", "Sessão avulsa");
+      } else {
       const packages = await rows<(RowDataPacket & { id: number; patientId: number; totalSessions: number })[]>("SELECT id, patient_id AS patientId, total_sessions AS totalSessions FROM packages WHERE id = ? AND owner_id = ? LIMIT 1", [packageId, ownerId]);
       if (!packages.length) return Response.json({ error: "Pacote não encontrado." }, { status: 404 });
       const count = await rows<(RowDataPacket & { total: number })[]>("SELECT COUNT(*) AS total FROM sessions WHERE package_id = ? AND owner_id = ? AND voided_at IS NULL", [packageId, ownerId]);
@@ -177,11 +195,16 @@ export async function POST(request: Request) {
       const [created] = await pool.execute<ResultSetHeader>("INSERT INTO sessions (owner_id, patient_id, package_id, performed_at, procedure_type, measurement_in, measurement_out, occurrences, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, packages[0].patientId, packageId, String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || "")]);
       await logAction(ownerId, "session", created.insertId, "created");
       if (count[0].total + 1 >= packages[0].totalSessions) await pool.execute("UPDATE packages SET status = 'Concluído' WHERE id = ? AND owner_id = ?", [packageId, ownerId]);
+      }
     } else if (action === "session.update") {
       const id = Number(body.id);
-      const found = await rows<RowDataPacket[]>("SELECT performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes FROM sessions WHERE id = ? AND owner_id = ? AND voided_at IS NULL LIMIT 1", [id, ownerId]);
+      const found = await rows<RowDataPacket[]>("SELECT package_id AS packageId, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes FROM sessions WHERE id = ? AND owner_id = ? AND voided_at IS NULL LIMIT 1", [id, ownerId]);
       if (!found.length) return Response.json({ error: "Sessão não encontrada." }, { status: 404 });
-      await pool.execute("UPDATE sessions SET performed_at = ?, procedure_type = ?, measurement_in = ?, measurement_out = ?, occurrences = ?, notes = ? WHERE id = ? AND owner_id = ? AND voided_at IS NULL", [String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || ""), id, ownerId]);
+      const standalone = found[0].packageId === null;
+      const total = standalone ? Math.round(Number(body.standaloneAmount || 0) * 100) : 0;
+      const paid = standalone ? Math.round(Number(body.standalonePaidAmount || 0) * 100) : 0;
+      if (standalone && (!Number.isFinite(total) || total < 0 || !Number.isFinite(paid) || paid < 0 || paid > total)) return Response.json({ error: "Confira o valor da sessão e o valor pago." }, { status: 400 });
+      await pool.execute("UPDATE sessions SET performed_at = ?, procedure_type = ?, measurement_in = ?, measurement_out = ?, occurrences = ?, notes = ?, standalone_amount_cents = IF(package_id IS NULL, ?, standalone_amount_cents), standalone_paid_cents = IF(package_id IS NULL, ?, standalone_paid_cents), standalone_payment_method = IF(package_id IS NULL, ?, standalone_payment_method), standalone_due_date = IF(package_id IS NULL, ?, standalone_due_date) WHERE id = ? AND owner_id = ? AND voided_at IS NULL", [String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || ""), total, paid, String(body.standalonePaymentMethod || "Não informado"), body.standaloneDueDate ? String(body.standaloneDueDate) : null, id, ownerId]);
       await logAction(ownerId, "session", id, "updated", JSON.stringify(mapDates(found[0])));
     } else if (action === "payment.create") {
       const packageId = Number(body.packageId); const amountCents = Math.round(Number(body.amount || 0) * 100);
@@ -277,10 +300,10 @@ export async function POST(request: Request) {
       await pool.execute("DELETE FROM packages WHERE id = ? AND owner_id = ?", [id, ownerId]);
     } else if (action === "session.delete") {
       const id = Number(body.id);
-      const found = await rows<(RowDataPacket & { packageId: number })[]>("SELECT package_id AS packageId FROM sessions WHERE id = ? AND owner_id = ?", [id, ownerId]);
+      const found = await rows<(RowDataPacket & { packageId: number | null })[]>("SELECT package_id AS packageId FROM sessions WHERE id = ? AND owner_id = ?", [id, ownerId]);
       await pool.execute("UPDATE sessions SET voided_at = CURRENT_TIMESTAMP, void_reason = ? WHERE id = ? AND owner_id = ? AND voided_at IS NULL", [String(body.reason || "Registro cancelado pela profissional"), id, ownerId]);
       await logAction(ownerId, "session", id, "voided", String(body.reason || "Registro cancelado pela profissional"));
-      if (found.length) await pool.execute("UPDATE packages SET status = 'Em andamento' WHERE id = ? AND owner_id = ?", [found[0].packageId, ownerId]);
+      if (found[0]?.packageId) await pool.execute("UPDATE packages SET status = 'Em andamento' WHERE id = ? AND owner_id = ?", [found[0].packageId, ownerId]);
     } else if (action === "payment.delete") {
       const id = Number(body.id);
       const found = await rows<(RowDataPacket & { packageId: number })[]>("SELECT package_id AS packageId FROM payments WHERE id = ? AND owner_id = ?", [id, ownerId]);

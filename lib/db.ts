@@ -57,7 +57,7 @@ export async function ensureSchema() {
       id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
       owner_id VARCHAR(191) NOT NULL,
       patient_id INT UNSIGNED NOT NULL,
-      package_id INT UNSIGNED NOT NULL,
+      package_id INT UNSIGNED NULL,
       performed_at DATE NOT NULL,
       procedure_type VARCHAR(120) NOT NULL DEFAULT '',
       measurement_in VARCHAR(120) NOT NULL DEFAULT '',
@@ -151,11 +151,18 @@ export async function ensureSchema() {
     ["updated_at", "TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER notes"],
     ["voided_at", "TIMESTAMP NULL AFTER updated_at"],
     ["void_reason", "VARCHAR(255) NULL AFTER voided_at"],
+    ["session_kind", "VARCHAR(20) NOT NULL DEFAULT 'package' AFTER package_id"],
+    ["standalone_amount_cents", "INT UNSIGNED NOT NULL DEFAULT 0 AFTER session_kind"],
+    ["standalone_paid_cents", "INT UNSIGNED NOT NULL DEFAULT 0 AFTER standalone_amount_cents"],
+    ["standalone_payment_method", "VARCHAR(40) NOT NULL DEFAULT 'Não informado' AFTER standalone_paid_cents"],
+    ["standalone_due_date", "DATE NULL AFTER standalone_payment_method"],
   ] as const;
   for (const [column, definition] of sessionColumns) {
     const [existing] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sessions' AND COLUMN_NAME = ?", [column]);
     if (!existing.length) await pool.execute(`ALTER TABLE sessions ADD COLUMN ${column} ${definition}`);
   }
+  const [sessionPackageColumn] = await pool.execute<RowDataPacket[]>("SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'sessions' AND COLUMN_NAME = 'package_id'");
+  if (sessionPackageColumn[0]?.IS_NULLABLE === "NO") await pool.execute("ALTER TABLE sessions MODIFY COLUMN package_id INT UNSIGNED NULL");
   const [dueDateColumn] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'packages' AND COLUMN_NAME = 'payment_due_date'");
   if (!dueDateColumn.length) await pool.execute("ALTER TABLE packages ADD COLUMN payment_due_date DATE NULL AFTER last_payment_at");
   await pool.execute("UPDATE packages SET payment_due_date = DATE_ADD(purchased_at, INTERVAL 30 DAY) WHERE payment_due_date IS NULL");

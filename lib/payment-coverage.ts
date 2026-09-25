@@ -8,7 +8,7 @@ export type PackageForCoverage = {
 
 export type SessionForCoverage = {
   id: number;
-  packageId: number;
+  packageId: number | null;
   performedAt: string | Date;
 };
 
