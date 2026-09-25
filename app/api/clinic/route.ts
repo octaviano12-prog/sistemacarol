@@ -7,8 +7,16 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type IdRow = RowDataPacket & { id: number };
+type PatientNameRow = RowDataPacket & { id: number; name: string };
 const today = () => new Date().toISOString().slice(0, 10);
 const ownerFrom = (request: Request) => request.headers.get("x-clinic-owner") || process.env.CLINIC_OWNER_ID || "clinica-essencia";
+const cleanPatientName = (value: unknown) => String(value || "").trim().replace(/\s+/g, " ");
+const normalizePatientName = (value: string) => cleanPatientName(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
+async function findDuplicatePatient(ownerId: string, name: string, excludedId?: number) {
+  const patients = await rows<PatientNameRow[]>("SELECT id, name FROM patients WHERE owner_id = ?", [ownerId]);
+  const normalized = normalizePatientName(name);
+  return patients.find((patient) => patient.id !== excludedId && normalizePatientName(patient.name) === normalized);
+}
 function addWeeksToSqlDateTime(value: string, weeks: number) {
   const [date, time = "00:00"] = value.split(" ");
   const result = new Date(`${date}T12:00:00Z`);
@@ -142,8 +150,10 @@ export async function POST(request: Request) {
     const action = String(body.action || "");
     const pool = getPool();
     if (action === "patient.create") {
-      const name = String(body.name || "").trim();
+      const name = cleanPatientName(body.name);
       if (!name) return Response.json({ error: "Informe o nome do paciente." }, { status: 400 });
+      const duplicate = await findDuplicatePatient(ownerId, name);
+      if (duplicate) return Response.json({ error: `A paciente “${duplicate.name}” já está cadastrada. Abra o prontuário existente para continuar.` }, { status: 409 });
       const profilePhoto = validProfilePhoto(body.profilePhoto);
       await pool.execute("INSERT INTO patients (owner_id, name, phone, email, profile_photo, notes) VALUES (?, ?, ?, ?, ?, ?)", [ownerId, name, String(body.phone || ""), String(body.email || ""), profilePhoto, String(body.notes || "")]);
     } else if (action === "package.create") {
@@ -269,8 +279,10 @@ export async function POST(request: Request) {
       if (unavailable) return Response.json({ error: hasPersonalBlock ? "O novo horário está bloqueado por um compromisso pessoal." : conflicts.length >= 2 ? "Este horário já tem dois pacientes." : "O novo horário já está ocupado. Escolha outro horário na agenda." }, { status: 409 });
       await pool.execute("UPDATE appointments SET title = ?, scheduled_at = ?, duration_minutes = ?, notes = ? WHERE id = ? AND owner_id = ?", [title, scheduledAt, durationMinutes, String(body.notes || ""), id, ownerId]);
     } else if (action === "patient.update") {
-      const id = Number(body.id); const name = String(body.name || "").trim();
+      const id = Number(body.id); const name = cleanPatientName(body.name);
       if (!id || !name) return Response.json({ error: "Paciente inválido." }, { status: 400 });
+      const duplicate = await findDuplicatePatient(ownerId, name, id);
+      if (duplicate) return Response.json({ error: `Já existe outra paciente cadastrada como “${duplicate.name}”. Use o prontuário existente ou informe um nome completo diferente.` }, { status: 409 });
       const profilePhoto = validProfilePhoto(body.profilePhoto);
       await pool.execute("UPDATE patients SET name = ?, phone = ?, email = ?, profile_photo = ?, notes = ? WHERE id = ? AND owner_id = ?", [name, String(body.phone || ""), String(body.email || ""), profilePhoto, String(body.notes || ""), id, ownerId]);
     } else if (action === "package.dueDate") {
