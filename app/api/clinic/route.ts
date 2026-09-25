@@ -54,7 +54,7 @@ async function removeLegacyDemoData(ownerId: string) {
 
 function mapDates(row: Record<string, unknown>) {
   const result = { ...row };
-  for (const key of ["createdAt", "updatedAt", "voidedAt", "purchasedAt", "lastPaymentAt", "paymentDueDate", "performedAt", "paidAt", "scheduledAt"]) {
+  for (const key of ["createdAt", "updatedAt", "voidedAt", "deletedAt", "purchasedAt", "lastPaymentAt", "paymentDueDate", "performedAt", "paidAt", "scheduledAt"]) {
     const value = result[key];
     if (value instanceof Date) result[key] = value.toISOString().slice(0, key === "scheduledAt" ? 16 : 10);
   }
@@ -68,6 +68,7 @@ async function loadClinic(ownerId: string) {
   const paymentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, amount_cents AS amountCents, method, paid_at AS paidAt, notes, created_at AS createdAt FROM payments WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
   const appointmentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, title, scheduled_at AS scheduledAt, duration_minutes AS durationMinutes, is_backup AS isBackup, status, notes, created_at AS createdAt FROM appointments WHERE owner_id = ? ORDER BY scheduled_at", [ownerId]);
   const expenseRows = await rows<RowDataPacket[]>("SELECT id, description, category, amount_cents AS amountCents, paid_at AS paidAt, notes, created_at AS createdAt FROM expenses WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
+  const documentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, name, category, mime_type AS mimeType, size_bytes AS sizeBytes, checksum_sha256 AS checksumSha256, created_at AS createdAt FROM patient_documents WHERE owner_id = ? AND deleted_at IS NULL ORDER BY created_at DESC, id DESC", [ownerId]);
   const mappedPackages = packageRows.map(mapDates);
   const mappedSessions = sessionRows.map(mapDates);
   const coverage = calculateSessionCoverage(
@@ -75,7 +76,7 @@ async function loadClinic(ownerId: string) {
     mappedSessions.map((session) => ({ id: Number(session.id), packageId: Number(session.packageId), performedAt: String(session.performedAt) })),
   );
   const sessionsWithCoverage = mappedSessions.map((session) => ({ ...session, ...coverage.get(Number(session.id)) }));
-  return { patients: patientRows.map(mapDates), packages: mappedPackages, sessions: sessionsWithCoverage, payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), expenses: expenseRows.map(mapDates) };
+  return { patients: patientRows.map(mapDates), packages: mappedPackages, sessions: sessionsWithCoverage, payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), expenses: expenseRows.map(mapDates), documents: documentRows.map(mapDates) };
 }
 
 async function logAction(ownerId: string, entityType: string, entityId: number, action: string, details = "") {
@@ -112,8 +113,9 @@ export async function GET(request: Request) {
     if (new URL(request.url).searchParams.get("export") === "backup") {
       const voidedSessions = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes, updated_at AS updatedAt, voided_at AS voidedAt, void_reason AS voidReason, created_at AS createdAt FROM sessions WHERE owner_id = ? AND voided_at IS NOT NULL ORDER BY id", [ownerId]);
       const auditLogs = await rows<RowDataPacket[]>("SELECT entity_type AS entityType, entity_id AS entityId, action, details, created_at AS createdAt FROM audit_logs WHERE owner_id = ? ORDER BY id", [ownerId]);
+      const documentFiles = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, name, category, mime_type AS mimeType, size_bytes AS sizeBytes, checksum_sha256 AS checksumSha256, TO_BASE64(content) AS contentBase64, deleted_at AS deletedAt, created_at AS createdAt FROM patient_documents WHERE owner_id = ? ORDER BY id", [ownerId]);
       const filename = `backup-clinica-${today()}.json`;
-      return new Response(JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), clinic, voidedSessions: voidedSessions.map(mapDates), auditLogs: auditLogs.map(mapDates) }, null, 2), { headers: { "Content-Type": "application/json; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"`, "Cache-Control": "no-store" } });
+      return new Response(JSON.stringify({ version: 2, exportedAt: new Date().toISOString(), clinic, documentFiles: documentFiles.map(mapDates), voidedSessions: voidedSessions.map(mapDates), auditLogs: auditLogs.map(mapDates) }, null, 2), { headers: { "Content-Type": "application/json; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"`, "Cache-Control": "no-store" } });
     }
     return Response.json(clinic);
   } catch (error) {
@@ -254,6 +256,11 @@ export async function POST(request: Request) {
       const connection = await pool.getConnection();
       try {
         await connection.beginTransaction();
+        const [documents] = await connection.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM patient_documents WHERE patient_id = ? AND owner_id = ?", [id, ownerId]);
+        if (Number(documents[0]?.total || 0) > 0) {
+          await connection.rollback();
+          return Response.json({ error: "Este paciente possui documentos protegidos. O prontuário não pode ser excluído." }, { status: 400 });
+        }
         await connection.execute("DELETE FROM appointments WHERE patient_id = ? AND owner_id = ?", [id, ownerId]);
         await connection.execute("DELETE FROM payments WHERE patient_id = ? AND owner_id = ?", [id, ownerId]);
         await connection.execute("DELETE FROM sessions WHERE patient_id = ? AND owner_id = ?", [id, ownerId]);

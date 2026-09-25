@@ -121,6 +121,21 @@ export async function ensureSchema() {
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_audit_owner_entity (owner_id, entity_type, entity_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    `CREATE TABLE IF NOT EXISTS patient_documents (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      owner_id VARCHAR(191) NOT NULL,
+      patient_id INT UNSIGNED NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      category VARCHAR(80) NOT NULL DEFAULT 'Documento',
+      mime_type VARCHAR(120) NOT NULL,
+      size_bytes INT UNSIGNED NOT NULL,
+      checksum_sha256 CHAR(64) NOT NULL,
+      content LONGBLOB NOT NULL,
+      deleted_at TIMESTAMP NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_patient_documents_patient FOREIGN KEY (patient_id) REFERENCES patients(id),
+      INDEX idx_documents_owner_patient (owner_id, patient_id, deleted_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
   ];
   for (const statement of statements) await pool.execute(statement);
   const sessionColumns = [
