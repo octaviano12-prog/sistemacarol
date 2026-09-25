@@ -1,4 +1,4 @@
-export const DEFAULT_CONFIRMATION_MESSAGE = "Olá, {nome}! Tudo bem? Aqui é da Clínica Essência, da Dra. Maria Carolini. Gostaria de confirmar seu atendimento no dia {data} às {horario}. Podemos confirmar?";
+export const DEFAULT_CONFIRMATION_MESSAGE = "Olá, {nome}! Tudo bem? Aqui é da Dra. Maria Carolini, fisioterapeuta. Gostaria de confirmar seu atendimento no dia {data} às {horario}. Podemos confirmar?";
 
 export function formatConfirmationMessage(template: string, values: { name: string; date: string; time: string; duration: string }) {
   return (template || DEFAULT_CONFIRMATION_MESSAGE)

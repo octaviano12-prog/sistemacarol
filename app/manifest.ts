@@ -2,9 +2,9 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Clínica Essência",
-    short_name: "Clínica Essência",
-    description: "Gestão de pacientes, sessões, pagamentos e agenda da Clínica Essência.",
+    name: "Dra. Maria Carolini - Fisioterapeuta",
+    short_name: "Maria Carolini",
+    description: "Gestão de pacientes, sessões, pagamentos e agenda da Dra. Maria Carolini.",
     start_url: "/",
     scope: "/",
     display: "standalone",
@@ -13,6 +13,12 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: "#07533f",
     categories: ["medical", "business", "productivity"],
     icons: [
+      {
+        src: "/logo-dra-maria-carolini.jpg",
+        sizes: "1280x1280",
+        type: "image/jpeg",
+        purpose: "any",
+      },
       {
         src: "/app-icon.svg",
         sizes: "any",

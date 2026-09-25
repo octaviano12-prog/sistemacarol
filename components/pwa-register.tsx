@@ -33,5 +33,5 @@ export function PwaRegister() {
     setInstallPrompt(null);
   };
 
-  return <button type="button" onClick={install} className="pwa-install">Instalar Clínica Essência</button>;
+  return <button type="button" onClick={install} className="pwa-install">Instalar sistema da Dra. Maria Carolini</button>;
 }

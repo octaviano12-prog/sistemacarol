@@ -3,7 +3,7 @@ import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const publicRoute = pathname === "/login" || pathname === "/api/auth/login" || pathname === "/manifest.webmanifest" || pathname === "/sw.js" || pathname === "/app-icon.svg" || pathname === "/app-icon-maskable.svg";
+  const publicRoute = pathname === "/login" || pathname === "/api/auth/login" || pathname === "/manifest.webmanifest" || pathname === "/sw.js" || pathname === "/app-icon.svg" || pathname === "/app-icon-maskable.svg" || pathname === "/logo-dra-maria-carolini.jpg";
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   const authenticated = await verifySessionToken(token);
 

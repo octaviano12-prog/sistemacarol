@@ -3,18 +3,19 @@ import { PwaRegister } from "@/components/pwa-register";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Clínica Essência | Gestão de pacientes e sessões",
+  title: "Dra. Maria Carolini | Fisioterapeuta",
   description: "Controle de pacientes, pacotes, sessões, pagamentos e agenda.",
-  applicationName: "Clínica Essência",
+  applicationName: "Dra. Maria Carolini",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Clínica Essência",
+    title: "Dra. Maria Carolini",
   },
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: "/logo-dra-maria-carolini.jpg",
+    shortcut: "/logo-dra-maria-carolini.jpg",
+    apple: "/logo-dra-maria-carolini.jpg",
   },
 };
 

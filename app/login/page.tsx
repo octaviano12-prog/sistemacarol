@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import { BrandLogo } from "@/components/brand-logo";
 import { ArrowRight, Eye, EyeOff, HeartPulse, Leaf, LockKeyhole, ShieldCheck, Sparkles, UserRound } from "lucide-react";
 
 export default function LoginPage() {
@@ -40,8 +41,8 @@ export default function LoginPage() {
       <div className="absolute -right-24 top-20 size-80 rounded-full border border-white/10" />
       <div className="absolute -right-5 top-40 size-56 rounded-full border border-white/10" />
       <div className="relative flex items-center gap-3">
-        <span className="brand-mark grid size-12 place-items-center rounded-2xl border border-white/20 bg-white/10 shadow-xl shadow-black/10 backdrop-blur"><Sparkles className="text-[#ead9a5]" /></span>
-        <div><p className="font-serif text-2xl font-semibold">Clínica Essência</p><p className="text-sm text-white/55">Cuidado em cada sessão</p></div>
+        <BrandLogo size={64} className="rounded-2xl border-2 border-white shadow-xl shadow-black/10" />
+        <div><p className="font-serif text-2xl font-semibold">Dra. Maria Carolini</p><p className="text-sm text-white/55">Fisioterapeuta</p></div>
       </div>
       <div className="relative max-w-xl">
         <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2 text-sm text-white/80 backdrop-blur"><HeartPulse className="size-4 text-[#ead9a5]" /> Gestão clínica inteligente</div>
@@ -54,7 +55,7 @@ export default function LoginPage() {
 
     <section className="relative flex min-h-screen items-center justify-center px-5 py-10 sm:px-10">
       <div className="w-full max-w-[470px]">
-        <div className="mb-9 flex items-center gap-3 lg:hidden"><span className="grid size-11 place-items-center rounded-2xl bg-[#07533f] text-[#ead9a5]"><Sparkles /></span><div><p className="font-serif text-xl font-semibold text-[#17352b]">Clínica Essência</p><p className="text-xs text-[#718078]">Cuidado em cada sessão</p></div></div>
+        <div className="mb-9 flex items-center gap-3 lg:hidden"><BrandLogo size={64} className="rounded-2xl border shadow-sm" /><div><p className="font-serif text-xl font-semibold text-[#17352b]">Dra. Maria Carolini</p><p className="text-xs text-[#718078]">Fisioterapeuta</p></div></div>
         <div className="login-card rounded-[30px] border border-white/80 bg-white/85 p-7 shadow-[0_30px_80px_rgba(20,65,48,.12)] backdrop-blur-xl sm:p-10">
           <div className="mb-7 flex items-center justify-between"><div className="relative"><span role="img" aria-label="Foto da Dra. Maria Carolini" style={{ backgroundImage: "url('/dra-maria-carolini.jpg')", backgroundSize: "cover", backgroundPosition: "center 32%" }} className="block size-[88px] rounded-[26px] border-4 border-white shadow-xl shadow-emerald-950/15" /><span className="absolute -bottom-2 -right-2 grid size-8 place-items-center rounded-xl border-2 border-white bg-[#e7f3ec] text-[#07533f] shadow-md"><Sparkles className="size-4" /></span></div><span className="login-lock grid size-12 place-items-center rounded-2xl bg-[#e7f3ec] text-[#07533f]"><LockKeyhole className="size-5" /></span></div>
           <p className="text-sm font-semibold uppercase tracking-[.18em] text-[#9b7b3f]">Área exclusiva</p>
