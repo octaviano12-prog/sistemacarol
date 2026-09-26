@@ -191,15 +191,16 @@ export async function POST(request: Request) {
       await pool.execute("UPDATE packages SET name = ?, total_sessions = ?, total_amount_cents = ?, payment_method = ?, payment_status = ?, purchased_at = ?, payment_due_date = ?, status = ? WHERE id = ? AND owner_id = ?", [name, totalSessions, totalAmountCents, paymentMethod, paymentStatus, purchasedAt, paymentDueDate, status, id, ownerId]);
     } else if (action === "session.create") {
       const packageId = Number(body.packageId);
-      const sessionKind = String(body.sessionKind || "package") === "standalone" ? "standalone" : "package";
-      if (sessionKind === "standalone") {
+      const requestedKind = String(body.sessionKind || "package");
+      const sessionKind = requestedKind === "standalone" || requestedKind === "courtesy" ? requestedKind : "package";
+      if (sessionKind === "standalone" || sessionKind === "courtesy") {
         const patientId = Number(body.patientId);
-        const total = Math.round(Number(body.standaloneAmount || 0) * 100);
-        const paid = Math.round(Number(body.standalonePaidAmount || 0) * 100);
-        if (!patientId) return Response.json({ error: "Escolha o paciente da sessão avulsa." }, { status: 400 });
+        const total = sessionKind === "courtesy" ? 0 : Math.round(Number(body.standaloneAmount || 0) * 100);
+        const paid = sessionKind === "courtesy" ? 0 : Math.round(Number(body.standalonePaidAmount || 0) * 100);
+        if (!patientId) return Response.json({ error: "Escolha o paciente da sessão." }, { status: 400 });
         if (!Number.isFinite(total) || total < 0 || !Number.isFinite(paid) || paid < 0 || paid > total) return Response.json({ error: "Confira o valor da sessão e o valor pago." }, { status: 400 });
-        const [created] = await pool.execute<ResultSetHeader>("INSERT INTO sessions (owner_id, patient_id, package_id, session_kind, standalone_amount_cents, standalone_paid_cents, standalone_payment_method, standalone_due_date, performed_at, procedure_type, measurement_in, measurement_out, occurrences, notes) VALUES (?, ?, NULL, 'standalone', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, total, paid, String(body.standalonePaymentMethod || "Não informado"), body.standaloneDueDate ? String(body.standaloneDueDate) : null, String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || "")]);
-        await logAction(ownerId, "session", created.insertId, "created", "Sessão avulsa");
+        const [created] = await pool.execute<ResultSetHeader>("INSERT INTO sessions (owner_id, patient_id, package_id, session_kind, standalone_amount_cents, standalone_paid_cents, standalone_payment_method, standalone_due_date, performed_at, procedure_type, measurement_in, measurement_out, occurrences, notes) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, sessionKind, total, paid, sessionKind === "courtesy" ? "Cortesia" : String(body.standalonePaymentMethod || "Não informado"), sessionKind === "courtesy" ? null : body.standaloneDueDate ? String(body.standaloneDueDate) : null, String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || "")]);
+        await logAction(ownerId, "session", created.insertId, "created", sessionKind === "courtesy" ? "Sessão em haver / cortesia" : "Sessão avulsa");
       } else {
       const packages = await rows<(RowDataPacket & { id: number; patientId: number; totalSessions: number })[]>("SELECT id, patient_id AS patientId, total_sessions AS totalSessions FROM packages WHERE id = ? AND owner_id = ? LIMIT 1", [packageId, ownerId]);
       if (!packages.length) return Response.json({ error: "Pacote não encontrado." }, { status: 404 });
@@ -211,13 +212,13 @@ export async function POST(request: Request) {
       }
     } else if (action === "session.update") {
       const id = Number(body.id);
-      const found = await rows<RowDataPacket[]>("SELECT package_id AS packageId, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes FROM sessions WHERE id = ? AND owner_id = ? AND voided_at IS NULL LIMIT 1", [id, ownerId]);
+      const found = await rows<RowDataPacket[]>("SELECT package_id AS packageId, session_kind AS sessionKind, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes FROM sessions WHERE id = ? AND owner_id = ? AND voided_at IS NULL LIMIT 1", [id, ownerId]);
       if (!found.length) return Response.json({ error: "Sessão não encontrada." }, { status: 404 });
-      const standalone = found[0].packageId === null;
+      const standalone = found[0].packageId === null && found[0].sessionKind !== "courtesy";
       const total = standalone ? Math.round(Number(body.standaloneAmount || 0) * 100) : 0;
       const paid = standalone ? Math.round(Number(body.standalonePaidAmount || 0) * 100) : 0;
       if (standalone && (!Number.isFinite(total) || total < 0 || !Number.isFinite(paid) || paid < 0 || paid > total)) return Response.json({ error: "Confira o valor da sessão e o valor pago." }, { status: 400 });
-      await pool.execute("UPDATE sessions SET performed_at = ?, procedure_type = ?, measurement_in = ?, measurement_out = ?, occurrences = ?, notes = ?, standalone_amount_cents = IF(package_id IS NULL, ?, standalone_amount_cents), standalone_paid_cents = IF(package_id IS NULL, ?, standalone_paid_cents), standalone_payment_method = IF(package_id IS NULL, ?, standalone_payment_method), standalone_due_date = IF(package_id IS NULL, ?, standalone_due_date) WHERE id = ? AND owner_id = ? AND voided_at IS NULL", [String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || ""), total, paid, String(body.standalonePaymentMethod || "Não informado"), body.standaloneDueDate ? String(body.standaloneDueDate) : null, id, ownerId]);
+      await pool.execute("UPDATE sessions SET performed_at = ?, procedure_type = ?, measurement_in = ?, measurement_out = ?, occurrences = ?, notes = ?, standalone_amount_cents = IF(session_kind = 'standalone', ?, standalone_amount_cents), standalone_paid_cents = IF(session_kind = 'standalone', ?, standalone_paid_cents), standalone_payment_method = IF(session_kind = 'standalone', ?, standalone_payment_method), standalone_due_date = IF(session_kind = 'standalone', ?, standalone_due_date) WHERE id = ? AND owner_id = ? AND voided_at IS NULL", [String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || ""), total, paid, String(body.standalonePaymentMethod || "Não informado"), body.standaloneDueDate ? String(body.standaloneDueDate) : null, id, ownerId]);
       await logAction(ownerId, "session", id, "updated", JSON.stringify(mapDates(found[0])));
     } else if (action === "payment.create") {
       const packageId = Number(body.packageId); const amountCents = Math.round(Number(body.amount || 0) * 100);
