@@ -38,7 +38,13 @@ const emptyData: ClinicData = { patients: [], packages: [], sessions: [], paymen
 const nav = [["overview", "Visão geral", LayoutDashboard], ["patients", "Pacientes", Users], ["packages", "Pacotes", PackageOpen], ["sessions", "Sessões", FileText], ["payments", "Financeiro", WalletCards], ["agenda", "Agenda", CalendarDays]] as const;
 const mobileNav = [["overview", "Início", LayoutDashboard], ["patients", "Pacientes", Users], ["sessions", "Sessões", FileText], ["agenda", "Agenda", CalendarDays], ["payments", "Financeiro", WalletCards]] as const;
 const money = (value: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value / 100);
-const dateBR = (value?: string | null) => value ? new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(new Date(`${value.slice(0, 10)}T12:00:00Z`)) : "—";
+const dateBR = (value?: string | null) => {
+  if (!value) return "—";
+  const dateKey = value.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+  if (!dateKey) return "—";
+  const date = new Date(`${dateKey}T12:00:00Z`);
+  return Number.isNaN(date.getTime()) ? "—" : new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(date);
+};
 const initials = (name: string) => name.split(" ").slice(0, 2).map((part) => part[0]).join("");
 const whatsappNumber = (phone: string) => { let digits = phone.replace(/\D/g, ""); if (digits.startsWith("0") && (digits.length === 11 || digits.length === 12)) digits = digits.slice(1); return digits.startsWith("55") ? digits : digits.length === 10 || digits.length === 11 ? `55${digits}` : digits; };
 const sessionCycle = (allSessions: Session[], session: Session) => { const ordered = [...allSessions].sort((a, b) => a.performedAt.localeCompare(b.performedAt) || a.id - b.id); const position = Math.max(0, ordered.findIndex((item) => item.id === session.id)); return { number: position % 5 + 1, cycle: Math.floor(position / 5) + 1 }; };

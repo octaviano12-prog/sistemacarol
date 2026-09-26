@@ -14,7 +14,14 @@ type PaymentRow = { id: number; patientId: number; packageId: number; amountCent
 type ReportData = { patients: PatientRow[]; packages: PackageRow[]; sessions: SessionRow[]; payments: PaymentRow[] };
 
 const money = (value: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value / 100);
-const dateBR = (value?: string | Date | null) => value ? new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(value instanceof Date ? value : new Date(`${String(value).slice(0, 10)}T12:00:00Z`)) : "—";
+const dateBR = (value?: string | Date | null) => {
+  if (!value) return "—";
+  const date = value instanceof Date ? value : (() => {
+    const dateKey = String(value).match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+    return dateKey ? new Date(`${dateKey}T12:00:00Z`) : new Date(Number.NaN);
+  })();
+  return Number.isNaN(date.getTime()) ? "—" : new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" }).format(date);
+};
 
 export default function PatientReportPage() {
   const params = useParams<{ id: string }>();
