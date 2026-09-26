@@ -13,7 +13,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Muitas tentativas. Aguarde alguns minutos." }, { status: 429 });
   }
 
-  const body = await request.json().catch(() => ({})) as { user?: string; password?: string };
+  const body = await request.json().catch(() => ({})) as { user?: string; password?: string; remember?: boolean | string };
   const valid = Boolean(process.env.ADMIN_USER && process.env.ADMIN_PASSWORD) &&
     body.user === process.env.ADMIN_USER && body.password === process.env.ADMIN_PASSWORD;
 
@@ -23,7 +23,8 @@ export async function POST(request: Request) {
   }
 
   attempts.delete(address);
+  const remember = body.remember === true || body.remember === "true";
   const response = NextResponse.json({ ok: true });
-  response.cookies.set(SESSION_COOKIE, await createSessionToken(), sessionCookieOptions);
+  response.cookies.set(SESSION_COOKIE, await createSessionToken(remember), sessionCookieOptions(remember));
   return response;
 }

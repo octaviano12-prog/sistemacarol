@@ -2,6 +2,7 @@ const encoder = new TextEncoder();
 
 export const SESSION_COOKIE = "clinica_essencia_session";
 const SESSION_DURATION_SECONDS = 60 * 60 * 12;
+const REMEMBERED_SESSION_DURATION_SECONDS = 60 * 60 * 24 * 30;
 
 function secret() {
   return process.env.AUTH_SECRET || process.env.ADMIN_PASSWORD || "";
@@ -19,8 +20,9 @@ async function sign(value: string) {
   return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export async function createSessionToken() {
-  const expiresAt = Math.floor(Date.now() / 1000) + SESSION_DURATION_SECONDS;
+export async function createSessionToken(remember = false) {
+  const duration = remember ? REMEMBERED_SESSION_DURATION_SECONDS : SESSION_DURATION_SECONDS;
+  const expiresAt = Math.floor(Date.now() / 1000) + duration;
   const payload = `${process.env.ADMIN_USER || "admin"}.${expiresAt}`;
   return `${payload}.${await sign(payload)}`;
 }
@@ -38,10 +40,12 @@ export async function verifySessionToken(token?: string) {
   return different === 0;
 }
 
-export const sessionCookieOptions = {
-  httpOnly: true,
-  sameSite: "lax" as const,
-  secure: process.env.NODE_ENV === "production",
-  path: "/",
-  maxAge: SESSION_DURATION_SECONDS,
-};
+export function sessionCookieOptions(remember = false) {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    ...(remember ? { maxAge: REMEMBERED_SESSION_DURATION_SECONDS } : {}),
+  };
+}

@@ -69,6 +69,10 @@ export default function LoginPage() {
             <label className="grid gap-2 text-sm font-medium text-[#42564d]">Senha
               <span className="relative"><LockKeyhole className="absolute left-4 top-1/2 size-5 -translate-y-1/2 text-[#8a9991]" /><input name="password" type={showPassword ? "text" : "password"} autoComplete="current-password" required placeholder="Digite sua senha" className="h-14 w-full rounded-2xl border border-[#dce6e0] bg-[#fbfdfb] pl-12 pr-12 outline-none transition focus:border-[#73a791] focus:ring-4 focus:ring-[#dcefe6]" /><button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute right-4 top-1/2 -translate-y-1/2 text-[#7f8e86]" aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}>{showPassword ? <EyeOff className="size-5" /> : <Eye className="size-5" />}</button></span>
             </label>
+            <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-[#dce6e0] bg-[#f7faf8] px-4 py-3 text-sm text-[#42564d]">
+              <input name="remember" value="true" type="checkbox" className="mt-0.5 size-4 accent-[#087057]" />
+              <span><strong className="block font-semibold">Lembrar de mim neste aparelho</strong><small className="mt-0.5 block text-xs leading-relaxed text-[#718078]">Mantém o acesso por até 30 dias. Use somente no seu celular, tablet ou computador pessoal.</small></span>
+            </label>
             {error && <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
             <button disabled={loading} className="mt-1 flex h-14 items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#07533f] to-[#087057] font-semibold text-white shadow-lg shadow-[#07533f]/20 transition hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-wait disabled:opacity-70">{loading ? "Entrando..." : <>Entrar no sistema <ArrowRight className="size-5" /></>}</button>
           </form>
