@@ -13,9 +13,9 @@ export const metadata: Metadata = {
     title: "Dra. Maria Carolini",
   },
   icons: {
-    icon: "/logo-dra-maria-carolini.jpg",
-    shortcut: "/logo-dra-maria-carolini.jpg",
-    apple: "/logo-dra-maria-carolini.jpg",
+    icon: "/logo-dra-maria-carolini-icon.png",
+    shortcut: "/logo-dra-maria-carolini-icon.png",
+    apple: "/logo-dra-maria-carolini-icon.png",
   },
 };
 

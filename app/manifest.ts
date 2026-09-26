@@ -14,9 +14,9 @@ export default function manifest(): MetadataRoute.Manifest {
     categories: ["medical", "business", "productivity"],
     icons: [
       {
-        src: "/logo-dra-maria-carolini.jpg",
-        sizes: "1280x1280",
-        type: "image/jpeg",
+        src: "/logo-dra-maria-carolini-icon.png",
+        sizes: "1254x1254",
+        type: "image/png",
         purpose: "any",
       },
       {
