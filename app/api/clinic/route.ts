@@ -63,7 +63,7 @@ async function removeLegacyDemoData(ownerId: string) {
 
 function mapDates(row: Record<string, unknown>) {
   const result = { ...row };
-  for (const key of ["createdAt", "updatedAt", "voidedAt", "deletedAt", "purchasedAt", "lastPaymentAt", "paymentDueDate", "performedAt", "paidAt", "scheduledAt"]) {
+  for (const key of ["createdAt", "updatedAt", "voidedAt", "deletedAt", "purchasedAt", "lastPaymentAt", "paymentDueDate", "performedAt", "paidAt", "occurredAt", "scheduledAt"]) {
     const value = result[key];
     if (value instanceof Date) result[key] = value.toISOString().slice(0, key === "scheduledAt" ? 16 : 10);
   }
@@ -78,6 +78,7 @@ async function loadClinic(ownerId: string) {
   const appointmentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, title, scheduled_at AS scheduledAt, duration_minutes AS durationMinutes, is_backup AS isBackup, status, notes, created_at AS createdAt FROM appointments WHERE owner_id = ? ORDER BY scheduled_at", [ownerId]);
   const waitingListRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, preference, notes, created_at AS createdAt FROM waiting_list WHERE owner_id = ? ORDER BY created_at, id", [ownerId]);
   const expenseRows = await rows<RowDataPacket[]>("SELECT id, description, category, amount_cents AS amountCents, paid_at AS paidAt, notes, created_at AS createdAt FROM expenses WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
+  const cashEntryRows = await rows<RowDataPacket[]>("SELECT id, kind, description, category, method, amount_cents AS amountCents, occurred_at AS occurredAt, notes, created_at AS createdAt FROM cash_entries WHERE owner_id = ? ORDER BY occurred_at DESC, id DESC", [ownerId]);
   const documentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, name, category, mime_type AS mimeType, size_bytes AS sizeBytes, checksum_sha256 AS checksumSha256, created_at AS createdAt FROM patient_documents WHERE owner_id = ? AND deleted_at IS NULL ORDER BY created_at DESC, id DESC", [ownerId]);
   const settingRows = await rows<(RowDataPacket & { confirmationMessage: string })[]>("SELECT whatsapp_confirmation_template AS confirmationMessage FROM clinic_settings WHERE owner_id = ? LIMIT 1", [ownerId]);
   const mappedPackages = packageRows.map(mapDates);
@@ -95,7 +96,7 @@ async function loadClinic(ownerId: string) {
     const paymentStatus = total === 0 ? "Sem cobrança" : paid >= total ? "Paga" : dueDate && dueDate < today() ? "Vencida" : "Pendente";
     return { ...session, sessionValueCents: total, coveredAmountCents: paid, outstandingAmountCents: outstanding, paymentStatus, isPartialPayment: paid > 0 && outstanding > 0, paymentDueDate: dueDate };
   });
-  return { patients: patientRows.map(mapDates), packages: mappedPackages, sessions: sessionsWithCoverage, payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), waitingList: waitingListRows.map(mapDates), expenses: expenseRows.map(mapDates), documents: documentRows.map(mapDates), settings: { confirmationMessage: settingRows[0]?.confirmationMessage || DEFAULT_CONFIRMATION_MESSAGE } };
+  return { patients: patientRows.map(mapDates), packages: mappedPackages, sessions: sessionsWithCoverage, payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), waitingList: waitingListRows.map(mapDates), expenses: expenseRows.map(mapDates), cashEntries: cashEntryRows.map(mapDates), documents: documentRows.map(mapDates), settings: { confirmationMessage: settingRows[0]?.confirmationMessage || DEFAULT_CONFIRMATION_MESSAGE } };
 }
 
 async function logAction(ownerId: string, entityType: string, entityId: number, action: string, details = "") {
@@ -350,6 +351,17 @@ export async function POST(request: Request) {
       await pool.execute("INSERT INTO expenses (owner_id, description, category, amount_cents, paid_at, notes) VALUES (?, ?, ?, ?, ?, ?)", [ownerId, description, String(body.category || "Outros"), amountCents, String(body.paidAt || today()), String(body.notes || "")]);
     } else if (action === "expense.delete") {
       await pool.execute("DELETE FROM expenses WHERE id = ? AND owner_id = ?", [Number(body.id), ownerId]);
+    } else if (action === "cash-entry.create") {
+      const kind = String(body.kind || "income") === "expense" ? "expense" : "income";
+      const description = String(body.description || "").trim();
+      const amountCents = Math.round(Number(body.amount || 0) * 100);
+      if (!description || !Number.isFinite(amountCents) || amountCents <= 0) return Response.json({ error: "Informe a descrição e um valor válido." }, { status: 400 });
+      await pool.execute("INSERT INTO cash_entries (owner_id, kind, description, category, method, amount_cents, occurred_at, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, kind, description, String(body.category || (kind === "expense" ? "Outros" : "Atendimento")), String(body.method || "Não informado"), amountCents, String(body.occurredAt || today()), String(body.notes || "")]);
+      await logAction(ownerId, "cash_entry", 0, "created", `${kind}: ${description}`);
+    } else if (action === "cash-entry.delete") {
+      const id = Number(body.id);
+      await pool.execute("DELETE FROM cash_entries WHERE id = ? AND owner_id = ?", [id, ownerId]);
+      await logAction(ownerId, "cash_entry", id, "deleted");
     } else return Response.json({ error: "Ação inválida." }, { status: 400 });
     return Response.json(await loadClinic(ownerId));
   } catch (error) {

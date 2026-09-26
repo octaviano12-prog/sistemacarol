@@ -122,6 +122,20 @@ export async function ensureSchema() {
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_expenses_owner_date (owner_id, paid_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    `CREATE TABLE IF NOT EXISTS cash_entries (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      owner_id VARCHAR(191) NOT NULL,
+      kind VARCHAR(20) NOT NULL,
+      description VARCHAR(191) NOT NULL,
+      category VARCHAR(80) NOT NULL DEFAULT 'Outros',
+      method VARCHAR(40) NOT NULL DEFAULT 'Não informado',
+      amount_cents INT UNSIGNED NOT NULL,
+      occurred_at DATE NOT NULL,
+      notes TEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_cash_entries_owner_date (owner_id, occurred_at),
+      INDEX idx_cash_entries_owner_kind (owner_id, kind)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     `CREATE TABLE IF NOT EXISTS audit_logs (
       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
       owner_id VARCHAR(191) NOT NULL,
