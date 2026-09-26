@@ -100,6 +100,17 @@ export async function ensureSchema() {
       CONSTRAINT fk_appointments_patient FOREIGN KEY (patient_id) REFERENCES patients(id),
       INDEX idx_appointments_owner_date (owner_id, scheduled_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    `CREATE TABLE IF NOT EXISTS waiting_list (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      owner_id VARCHAR(191) NOT NULL,
+      patient_id INT UNSIGNED NOT NULL,
+      preference VARCHAR(255) NOT NULL DEFAULT '',
+      notes TEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_waiting_list_patient FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE,
+      UNIQUE KEY uq_waiting_list_owner_patient (owner_id, patient_id),
+      INDEX idx_waiting_list_owner_created (owner_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     `CREATE TABLE IF NOT EXISTS expenses (
       id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
       owner_id VARCHAR(191) NOT NULL,

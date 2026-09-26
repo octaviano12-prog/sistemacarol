@@ -76,6 +76,7 @@ async function loadClinic(ownerId: string) {
   const sessionRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, session_kind AS sessionKind, standalone_amount_cents AS standaloneAmountCents, standalone_paid_cents AS standalonePaidCents, standalone_payment_method AS standalonePaymentMethod, standalone_due_date AS standaloneDueDate, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes, updated_at AS updatedAt, created_at AS createdAt FROM sessions WHERE owner_id = ? AND voided_at IS NULL ORDER BY performed_at DESC, id DESC", [ownerId]);
   const paymentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, amount_cents AS amountCents, method, paid_at AS paidAt, notes, created_at AS createdAt FROM payments WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
   const appointmentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, title, scheduled_at AS scheduledAt, duration_minutes AS durationMinutes, is_backup AS isBackup, status, notes, created_at AS createdAt FROM appointments WHERE owner_id = ? ORDER BY scheduled_at", [ownerId]);
+  const waitingListRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, preference, notes, created_at AS createdAt FROM waiting_list WHERE owner_id = ? ORDER BY created_at, id", [ownerId]);
   const expenseRows = await rows<RowDataPacket[]>("SELECT id, description, category, amount_cents AS amountCents, paid_at AS paidAt, notes, created_at AS createdAt FROM expenses WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
   const documentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, name, category, mime_type AS mimeType, size_bytes AS sizeBytes, checksum_sha256 AS checksumSha256, created_at AS createdAt FROM patient_documents WHERE owner_id = ? AND deleted_at IS NULL ORDER BY created_at DESC, id DESC", [ownerId]);
   const settingRows = await rows<(RowDataPacket & { confirmationMessage: string })[]>("SELECT whatsapp_confirmation_template AS confirmationMessage FROM clinic_settings WHERE owner_id = ? LIMIT 1", [ownerId]);
@@ -94,7 +95,7 @@ async function loadClinic(ownerId: string) {
     const paymentStatus = total === 0 ? "Sem cobrança" : paid >= total ? "Paga" : dueDate && dueDate < today() ? "Vencida" : "Pendente";
     return { ...session, sessionValueCents: total, coveredAmountCents: paid, outstandingAmountCents: outstanding, paymentStatus, isPartialPayment: paid > 0 && outstanding > 0, paymentDueDate: dueDate };
   });
-  return { patients: patientRows.map(mapDates), packages: mappedPackages, sessions: sessionsWithCoverage, payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), expenses: expenseRows.map(mapDates), documents: documentRows.map(mapDates), settings: { confirmationMessage: settingRows[0]?.confirmationMessage || DEFAULT_CONFIRMATION_MESSAGE } };
+  return { patients: patientRows.map(mapDates), packages: mappedPackages, sessions: sessionsWithCoverage, payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), waitingList: waitingListRows.map(mapDates), expenses: expenseRows.map(mapDates), documents: documentRows.map(mapDates), settings: { confirmationMessage: settingRows[0]?.confirmationMessage || DEFAULT_CONFIRMATION_MESSAGE } };
 }
 
 async function logAction(ownerId: string, entityType: string, entityId: number, action: string, details = "") {
@@ -254,6 +255,7 @@ export async function POST(request: Request) {
           }
         }
         for (const occurrence of occurrences) await connection.execute("INSERT INTO appointments (owner_id, patient_id, title, scheduled_at, duration_minutes, is_backup, status, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, title, occurrence, durationMinutes, allowOverlap, isBlock ? "Bloqueado" : "Agendado", String(body.notes || "")]);
+        if (!isBlock && patientId) await connection.execute("DELETE FROM waiting_list WHERE owner_id = ? AND patient_id = ?", [ownerId, patientId]);
         await connection.commit();
       } catch (error) {
         await connection.rollback();
@@ -327,6 +329,16 @@ export async function POST(request: Request) {
       await pool.execute("UPDATE appointments SET status = ? WHERE id = ? AND owner_id = ?", [status, id, ownerId]);
     } else if (action === "appointment.delete") {
       await pool.execute("DELETE FROM appointments WHERE id = ? AND owner_id = ?", [Number(body.id), ownerId]);
+    } else if (action === "waiting-list.create") {
+      const patientId = Number(body.patientId);
+      if (!patientId) return Response.json({ error: "Escolha a paciente para a lista de espera." }, { status: 400 });
+      const patient = await rows<IdRow[]>("SELECT id FROM patients WHERE id = ? AND owner_id = ? LIMIT 1", [patientId, ownerId]);
+      if (!patient.length) return Response.json({ error: "Paciente não encontrada." }, { status: 404 });
+      const existing = await rows<IdRow[]>("SELECT id FROM waiting_list WHERE patient_id = ? AND owner_id = ? LIMIT 1", [patientId, ownerId]);
+      if (existing.length) return Response.json({ error: "Essa paciente já está na lista de espera." }, { status: 409 });
+      await pool.execute("INSERT INTO waiting_list (owner_id, patient_id, preference, notes) VALUES (?, ?, ?, ?)", [ownerId, patientId, String(body.preference || "").trim(), String(body.notes || "").trim()]);
+    } else if (action === "waiting-list.delete") {
+      await pool.execute("DELETE FROM waiting_list WHERE id = ? AND owner_id = ?", [Number(body.id), ownerId]);
     } else if (action === "settings.confirmation-message.update") {
       const confirmationMessage = String(body.confirmationMessage || "").trim();
       if (!confirmationMessage || confirmationMessage.length > 2000) return Response.json({ error: "Escreva uma mensagem com até 2.000 caracteres." }, { status: 400 });
