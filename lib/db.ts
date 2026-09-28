@@ -44,6 +44,7 @@ export async function ensureSchema() {
       total_amount_cents INT UNSIGNED NOT NULL DEFAULT 0,
       paid_amount_cents INT UNSIGNED NOT NULL DEFAULT 0,
       payment_method VARCHAR(40) NOT NULL DEFAULT 'Não informado',
+      payment_details VARCHAR(255) NOT NULL DEFAULT '',
       payment_status VARCHAR(30) NOT NULL DEFAULT 'Pendente',
       purchased_at DATE NOT NULL,
       last_payment_at DATE NULL,
@@ -190,6 +191,8 @@ export async function ensureSchema() {
   if (sessionPackageColumn[0]?.IS_NULLABLE === "NO") await pool.execute("ALTER TABLE sessions MODIFY COLUMN package_id INT UNSIGNED NULL");
   const [dueDateColumn] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'packages' AND COLUMN_NAME = 'payment_due_date'");
   if (!dueDateColumn.length) await pool.execute("ALTER TABLE packages ADD COLUMN payment_due_date DATE NULL AFTER last_payment_at");
+  const [paymentDetailsColumn] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'packages' AND COLUMN_NAME = 'payment_details'");
+  if (!paymentDetailsColumn.length) await pool.execute("ALTER TABLE packages ADD COLUMN payment_details VARCHAR(255) NOT NULL DEFAULT '' AFTER payment_method");
   await pool.execute("UPDATE packages SET payment_due_date = DATE_ADD(purchased_at, INTERVAL 30 DAY) WHERE payment_due_date IS NULL");
   const [photoColumn] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'patients' AND COLUMN_NAME = 'profile_photo'");
   if (!photoColumn.length) await pool.execute("ALTER TABLE patients ADD COLUMN profile_photo MEDIUMTEXT NULL AFTER email");
