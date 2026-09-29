@@ -11,7 +11,9 @@ export function upgradeConfirmationMessage(template?: string | null) {
   const message = template?.trim() || DEFAULT_CONFIRMATION_MESSAGE;
   if (message.includes("{quando}")) return message;
 
-  return message.replace("seu atendimento no dia {data}", "seu atendimento de {quando}, dia {data}");
+  return message
+    .replace("seu atendimento no dia {data} às", "seu atendimento de {quando}, dia {data}, às")
+    .replace("seu atendimento no dia {data}", "seu atendimento de {quando}, dia {data}");
 }
 
 export function appointmentWhen(scheduledAt: string, referenceDate = new Date()) {
