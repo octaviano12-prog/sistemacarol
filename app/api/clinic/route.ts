@@ -1,7 +1,7 @@
 import { ResultSetHeader, RowDataPacket } from "mysql2";
 import { ensureSchema, getPool, rows } from "@/lib/db";
 import { calculateSessionCoverage } from "@/lib/payment-coverage";
-import { DEFAULT_CONFIRMATION_MESSAGE } from "@/lib/whatsapp-message";
+import { upgradeConfirmationMessage } from "@/lib/whatsapp-message";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -96,7 +96,7 @@ async function loadClinic(ownerId: string) {
     const paymentStatus = total === 0 ? "Sem cobrança" : paid >= total ? "Paga" : dueDate && dueDate < today() ? "Vencida" : "Pendente";
     return { ...session, sessionValueCents: total, coveredAmountCents: paid, outstandingAmountCents: outstanding, paymentStatus, isPartialPayment: paid > 0 && outstanding > 0, paymentDueDate: dueDate };
   });
-  return { patients: patientRows.map(mapDates), packages: mappedPackages, sessions: sessionsWithCoverage, payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), waitingList: waitingListRows.map(mapDates), expenses: expenseRows.map(mapDates), cashEntries: cashEntryRows.map(mapDates), documents: documentRows.map(mapDates), settings: { confirmationMessage: settingRows[0]?.confirmationMessage || DEFAULT_CONFIRMATION_MESSAGE } };
+  return { patients: patientRows.map(mapDates), packages: mappedPackages, sessions: sessionsWithCoverage, payments: paymentRows.map(mapDates), appointments: appointmentRows.map(mapDates), waitingList: waitingListRows.map(mapDates), expenses: expenseRows.map(mapDates), cashEntries: cashEntryRows.map(mapDates), documents: documentRows.map(mapDates), settings: { confirmationMessage: upgradeConfirmationMessage(settingRows[0]?.confirmationMessage) } };
 }
 
 async function logAction(ownerId: string, entityType: string, entityId: number, action: string, details = "") {
