@@ -77,7 +77,8 @@ export async function ensureSchema() {
       id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
       owner_id VARCHAR(191) NOT NULL,
       patient_id INT UNSIGNED NOT NULL,
-      package_id INT UNSIGNED NOT NULL,
+      package_id INT UNSIGNED NULL,
+      payment_kind VARCHAR(20) NOT NULL DEFAULT 'package',
       amount_cents INT UNSIGNED NOT NULL,
       method VARCHAR(40) NOT NULL,
       paid_at DATE NOT NULL,
@@ -86,6 +87,18 @@ export async function ensureSchema() {
       CONSTRAINT fk_payments_patient FOREIGN KEY (patient_id) REFERENCES patients(id),
       CONSTRAINT fk_payments_package FOREIGN KEY (package_id) REFERENCES packages(id),
       INDEX idx_payments_owner_patient (owner_id, patient_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+    `CREATE TABLE IF NOT EXISTS payment_allocations (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      owner_id VARCHAR(191) NOT NULL,
+      payment_id INT UNSIGNED NOT NULL,
+      session_id INT UNSIGNED NOT NULL,
+      amount_cents INT UNSIGNED NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_payment_allocations_payment FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE CASCADE,
+      CONSTRAINT fk_payment_allocations_session FOREIGN KEY (session_id) REFERENCES sessions(id),
+      INDEX idx_payment_allocations_payment (payment_id),
+      INDEX idx_payment_allocations_session (session_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
     `CREATE TABLE IF NOT EXISTS appointments (
       id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -193,6 +206,10 @@ export async function ensureSchema() {
   if (!dueDateColumn.length) await pool.execute("ALTER TABLE packages ADD COLUMN payment_due_date DATE NULL AFTER last_payment_at");
   const [paymentDetailsColumn] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'packages' AND COLUMN_NAME = 'payment_details'");
   if (!paymentDetailsColumn.length) await pool.execute("ALTER TABLE packages ADD COLUMN payment_details VARCHAR(255) NOT NULL DEFAULT '' AFTER payment_method");
+  const [paymentKindColumn] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'payments' AND COLUMN_NAME = 'payment_kind'");
+  if (!paymentKindColumn.length) await pool.execute("ALTER TABLE payments ADD COLUMN payment_kind VARCHAR(20) NOT NULL DEFAULT 'package' AFTER package_id");
+  const [paymentPackageColumn] = await pool.execute<RowDataPacket[]>("SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'payments' AND COLUMN_NAME = 'package_id'");
+  if (paymentPackageColumn[0]?.IS_NULLABLE === "NO") await pool.execute("ALTER TABLE payments MODIFY COLUMN package_id INT UNSIGNED NULL");
   await pool.execute("UPDATE packages SET payment_due_date = DATE_ADD(purchased_at, INTERVAL 30 DAY) WHERE payment_due_date IS NULL");
   const [photoColumn] = await pool.execute<RowDataPacket[]>("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'patients' AND COLUMN_NAME = 'profile_photo'");
   if (!photoColumn.length) await pool.execute("ALTER TABLE patients ADD COLUMN profile_photo MEDIUMTEXT NULL AFTER email");

@@ -73,8 +73,8 @@ function mapDates(row: Record<string, unknown>) {
 async function loadClinic(ownerId: string) {
   const patientRows = await rows<RowDataPacket[]>("SELECT id, name, phone, email, COALESCE(profile_photo, '') AS profilePhoto, birth_date AS birthDate, notes, active, created_at AS createdAt FROM patients WHERE owner_id = ? ORDER BY name", [ownerId]);
   const packageRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, name, total_sessions AS totalSessions, total_amount_cents AS totalAmountCents, paid_amount_cents AS paidAmountCents, payment_method AS paymentMethod, payment_details AS paymentDetails, payment_status AS paymentStatus, purchased_at AS purchasedAt, last_payment_at AS lastPaymentAt, payment_due_date AS paymentDueDate, status, created_at AS createdAt FROM packages WHERE owner_id = ? ORDER BY purchased_at DESC, id DESC", [ownerId]);
-  const sessionRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, session_kind AS sessionKind, standalone_amount_cents AS standaloneAmountCents, standalone_paid_cents AS standalonePaidCents, standalone_payment_method AS standalonePaymentMethod, standalone_due_date AS standaloneDueDate, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes, updated_at AS updatedAt, created_at AS createdAt FROM sessions WHERE owner_id = ? AND voided_at IS NULL ORDER BY performed_at DESC, id DESC", [ownerId]);
-  const paymentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, amount_cents AS amountCents, method, paid_at AS paidAt, notes, created_at AS createdAt FROM payments WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
+  const sessionRows = await rows<RowDataPacket[]>("SELECT s.id, s.patient_id AS patientId, s.package_id AS packageId, s.session_kind AS sessionKind, s.standalone_amount_cents AS standaloneAmountCents, s.standalone_paid_cents AS standalonePaidCents, COALESCE((SELECT SUM(pa.amount_cents) FROM payment_allocations pa WHERE pa.owner_id = s.owner_id AND pa.session_id = s.id), 0) AS allocatedPaymentCents, s.standalone_payment_method AS standalonePaymentMethod, s.standalone_due_date AS standaloneDueDate, s.performed_at AS performedAt, s.procedure_type AS procedureType, s.measurement_in AS measurementIn, s.measurement_out AS measurementOut, COALESCE(s.occurrences, '') AS occurrences, s.notes, s.updated_at AS updatedAt, s.created_at AS createdAt FROM sessions s WHERE s.owner_id = ? AND s.voided_at IS NULL ORDER BY s.performed_at DESC, s.id DESC", [ownerId]);
+  const paymentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, payment_kind AS paymentKind, amount_cents AS amountCents, method, paid_at AS paidAt, notes, created_at AS createdAt FROM payments WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
   const appointmentRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, title, scheduled_at AS scheduledAt, duration_minutes AS durationMinutes, is_backup AS isBackup, status, notes, created_at AS createdAt FROM appointments WHERE owner_id = ? ORDER BY scheduled_at", [ownerId]);
   const waitingListRows = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, preference, notes, created_at AS createdAt FROM waiting_list WHERE owner_id = ? ORDER BY created_at, id", [ownerId]);
   const expenseRows = await rows<RowDataPacket[]>("SELECT id, description, category, amount_cents AS amountCents, paid_at AS paidAt, notes, created_at AS createdAt FROM expenses WHERE owner_id = ? ORDER BY paid_at DESC, id DESC", [ownerId]);
@@ -134,8 +134,9 @@ export async function GET(request: Request) {
       const voidedSessions = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, package_id AS packageId, session_kind AS sessionKind, standalone_amount_cents AS standaloneAmountCents, standalone_paid_cents AS standalonePaidCents, standalone_payment_method AS standalonePaymentMethod, standalone_due_date AS standaloneDueDate, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes, updated_at AS updatedAt, voided_at AS voidedAt, void_reason AS voidReason, created_at AS createdAt FROM sessions WHERE owner_id = ? AND voided_at IS NOT NULL ORDER BY id", [ownerId]);
       const auditLogs = await rows<RowDataPacket[]>("SELECT entity_type AS entityType, entity_id AS entityId, action, details, created_at AS createdAt FROM audit_logs WHERE owner_id = ? ORDER BY id", [ownerId]);
       const documentFiles = await rows<RowDataPacket[]>("SELECT id, patient_id AS patientId, name, category, mime_type AS mimeType, size_bytes AS sizeBytes, checksum_sha256 AS checksumSha256, TO_BASE64(content) AS contentBase64, deleted_at AS deletedAt, created_at AS createdAt FROM patient_documents WHERE owner_id = ? ORDER BY id", [ownerId]);
+      const paymentAllocations = await rows<RowDataPacket[]>("SELECT payment_id AS paymentId, session_id AS sessionId, amount_cents AS amountCents, created_at AS createdAt FROM payment_allocations WHERE owner_id = ? ORDER BY id", [ownerId]);
       const filename = `backup-clinica-${today()}.json`;
-      return new Response(JSON.stringify({ version: 2, exportedAt: new Date().toISOString(), clinic, documentFiles: documentFiles.map(mapDates), voidedSessions: voidedSessions.map(mapDates), auditLogs: auditLogs.map(mapDates) }, null, 2), { headers: { "Content-Type": "application/json; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"`, "Cache-Control": "no-store" } });
+      return new Response(JSON.stringify({ version: 3, exportedAt: new Date().toISOString(), clinic, paymentAllocations: paymentAllocations.map(mapDates), documentFiles: documentFiles.map(mapDates), voidedSessions: voidedSessions.map(mapDates), auditLogs: auditLogs.map(mapDates) }, null, 2), { headers: { "Content-Type": "application/json; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"`, "Cache-Control": "no-store" } });
     }
     return Response.json(clinic);
   } catch (error) {
@@ -216,23 +217,72 @@ export async function POST(request: Request) {
       }
     } else if (action === "session.update") {
       const id = Number(body.id);
-      const found = await rows<RowDataPacket[]>("SELECT package_id AS packageId, session_kind AS sessionKind, performed_at AS performedAt, procedure_type AS procedureType, measurement_in AS measurementIn, measurement_out AS measurementOut, COALESCE(occurrences, '') AS occurrences, notes FROM sessions WHERE id = ? AND owner_id = ? AND voided_at IS NULL LIMIT 1", [id, ownerId]);
+      const found = await rows<RowDataPacket[]>("SELECT s.package_id AS packageId, s.session_kind AS sessionKind, s.performed_at AS performedAt, s.procedure_type AS procedureType, s.measurement_in AS measurementIn, s.measurement_out AS measurementOut, COALESCE(s.occurrences, '') AS occurrences, s.notes, COALESCE((SELECT SUM(pa.amount_cents) FROM payment_allocations pa WHERE pa.owner_id = s.owner_id AND pa.session_id = s.id), 0) AS allocatedPaymentCents FROM sessions s WHERE s.id = ? AND s.owner_id = ? AND s.voided_at IS NULL LIMIT 1", [id, ownerId]);
       if (!found.length) return Response.json({ error: "Sessão não encontrada." }, { status: 404 });
       const courtesy = String(found[0].sessionKind).startsWith("courtesy");
       const standalone = found[0].packageId === null && !courtesy;
       const total = standalone ? Math.round(Number(body.standaloneAmount || 0) * 100) : 0;
       const paid = standalone ? Math.round(Number(body.standalonePaidAmount || 0) * 100) : 0;
       if (standalone && (!Number.isFinite(total) || total < 0 || !Number.isFinite(paid) || paid < 0 || paid > total)) return Response.json({ error: "Confira o valor da sessão e o valor pago." }, { status: 400 });
+      if (standalone && paid < Number(found[0].allocatedPaymentCents || 0)) return Response.json({ error: "O valor pago não pode ser menor que os pagamentos já registrados para esta sessão." }, { status: 400 });
       const nextKind = courtesy ? (String(body.courtesyStatus || "pending") === "completed" ? "courtesy_completed" : "courtesy_pending") : String(found[0].sessionKind);
       await pool.execute("UPDATE sessions SET session_kind = ?, performed_at = ?, procedure_type = ?, measurement_in = ?, measurement_out = ?, occurrences = ?, notes = ?, standalone_amount_cents = IF(session_kind = 'standalone', ?, standalone_amount_cents), standalone_paid_cents = IF(session_kind = 'standalone', ?, standalone_paid_cents), standalone_payment_method = IF(session_kind = 'standalone', ?, standalone_payment_method), standalone_due_date = IF(session_kind = 'standalone', ?, standalone_due_date) WHERE id = ? AND owner_id = ? AND voided_at IS NULL", [nextKind, String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || ""), total, paid, String(body.standalonePaymentMethod || "Não informado"), body.standaloneDueDate ? String(body.standaloneDueDate) : null, id, ownerId]);
       await logAction(ownerId, "session", id, "updated", JSON.stringify({ before: mapDates(found[0]), courtesyStatus: courtesy ? nextKind : undefined }));
     } else if (action === "payment.create") {
-      const packageId = Number(body.packageId); const amountCents = Math.round(Number(body.amount || 0) * 100);
-      const packages = await rows<(RowDataPacket & { patientId: number; totalAmountCents: number; paidAmountCents: number })[]>("SELECT patient_id AS patientId, total_amount_cents AS totalAmountCents, paid_amount_cents AS paidAmountCents FROM packages WHERE id = ? AND owner_id = ? LIMIT 1", [packageId, ownerId]);
-      if (!packages.length || amountCents <= 0) return Response.json({ error: "Informe um pacote e um valor válido." }, { status: 400 });
-      const paidAt = String(body.paidAt || today()); const method = String(body.method || "Pix"); const newPaid = packages[0].paidAmountCents + amountCents;
-      await pool.execute("INSERT INTO payments (owner_id, patient_id, package_id, amount_cents, method, paid_at, notes) VALUES (?, ?, ?, ?, ?, ?, ?)", [ownerId, packages[0].patientId, packageId, amountCents, method, paidAt, String(body.notes || "")]);
-      await pool.execute("UPDATE packages SET paid_amount_cents = ?, payment_method = ?, last_payment_at = ?, payment_status = ? WHERE id = ? AND owner_id = ?", [newPaid, method, paidAt, newPaid >= packages[0].totalAmountCents ? "Pago" : "Parcial", packageId, ownerId]);
+      const paymentKind = String(body.paymentKind || "package") === "standalone" ? "standalone" : "package";
+      const amountCents = Math.round(Number(body.amount || 0) * 100);
+      if (!Number.isFinite(amountCents) || amountCents <= 0) return Response.json({ error: "Informe um valor recebido válido." }, { status: 400 });
+      const paidAt = String(body.paidAt || today());
+      const method = String(body.method || "Pix");
+      const notes = String(body.notes || "");
+      if (paymentKind === "standalone") {
+        const patientId = Number(body.patientId);
+        if (!patientId) return Response.json({ error: "Escolha a paciente das sessões avulsas." }, { status: 400 });
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          const [pendingSessions] = await connection.execute<(RowDataPacket & { id: number; total: number; paid: number })[]>(`SELECT id, standalone_amount_cents AS total, standalone_paid_cents AS paid
+            FROM sessions WHERE owner_id = ? AND patient_id = ? AND package_id IS NULL AND session_kind = 'standalone'
+            AND voided_at IS NULL AND standalone_paid_cents < standalone_amount_cents
+            ORDER BY performed_at, id FOR UPDATE`, [ownerId, patientId]);
+          const outstanding = pendingSessions.reduce((sum, session) => sum + Math.max(0, Number(session.total) - Number(session.paid)), 0);
+          if (!pendingSessions.length || outstanding <= 0) {
+            await connection.rollback();
+            return Response.json({ error: "Essa paciente não possui sessões avulsas pendentes." }, { status: 400 });
+          }
+          if (amountCents > outstanding) {
+            await connection.rollback();
+            return Response.json({ error: `O valor informado ultrapassa o saldo pendente de R$ ${(outstanding / 100).toFixed(2).replace(".", ",")}.` }, { status: 400 });
+          }
+          const [created] = await connection.execute<ResultSetHeader>("INSERT INTO payments (owner_id, patient_id, package_id, payment_kind, amount_cents, method, paid_at, notes) VALUES (?, ?, NULL, 'standalone', ?, ?, ?, ?)", [ownerId, patientId, amountCents, method, paidAt, notes]);
+          let remainingAmount = amountCents;
+          const allocations: { sessionId: number; amountCents: number }[] = [];
+          for (const session of pendingSessions) {
+            if (remainingAmount <= 0) break;
+            const allocation = Math.min(remainingAmount, Math.max(0, Number(session.total) - Number(session.paid)));
+            if (allocation <= 0) continue;
+            await connection.execute("UPDATE sessions SET standalone_paid_cents = standalone_paid_cents + ?, standalone_payment_method = ? WHERE id = ? AND owner_id = ?", [allocation, method, session.id, ownerId]);
+            await connection.execute("INSERT INTO payment_allocations (owner_id, payment_id, session_id, amount_cents) VALUES (?, ?, ?, ?)", [ownerId, created.insertId, session.id, allocation]);
+            allocations.push({ sessionId: session.id, amountCents: allocation });
+            remainingAmount -= allocation;
+          }
+          await connection.execute("INSERT INTO audit_logs (owner_id, entity_type, entity_id, action, details) VALUES (?, 'payment', ?, 'standalone_created', ?)", [ownerId, created.insertId, JSON.stringify({ patientId, amountCents, allocations })]);
+          await connection.commit();
+        } catch (error) {
+          await connection.rollback();
+          throw error;
+        } finally {
+          connection.release();
+        }
+      } else {
+        const packageId = Number(body.packageId);
+        const packages = await rows<(RowDataPacket & { patientId: number; totalAmountCents: number; paidAmountCents: number })[]>("SELECT patient_id AS patientId, total_amount_cents AS totalAmountCents, paid_amount_cents AS paidAmountCents FROM packages WHERE id = ? AND owner_id = ? LIMIT 1", [packageId, ownerId]);
+        if (!packages.length) return Response.json({ error: "Informe um pacote válido." }, { status: 400 });
+        const newPaid = packages[0].paidAmountCents + amountCents;
+        if (newPaid > packages[0].totalAmountCents) return Response.json({ error: "O valor informado ultrapassa o saldo pendente do pacote." }, { status: 400 });
+        await pool.execute("INSERT INTO payments (owner_id, patient_id, package_id, payment_kind, amount_cents, method, paid_at, notes) VALUES (?, ?, ?, 'package', ?, ?, ?, ?)", [ownerId, packages[0].patientId, packageId, amountCents, method, paidAt, notes]);
+        await pool.execute("UPDATE packages SET paid_amount_cents = ?, payment_method = ?, last_payment_at = ?, payment_status = ? WHERE id = ? AND owner_id = ?", [newPaid, method, paidAt, newPaid >= packages[0].totalAmountCents ? "Pago" : "Parcial", packageId, ownerId]);
+      }
     } else if (action === "appointment.create" || action === "appointment.block") {
       const isBlock = action === "appointment.block";
       const allowOverlap = !isBlock && (body.allowOverlap === true || String(body.allowOverlap || "") === "on");
@@ -329,9 +379,26 @@ export async function POST(request: Request) {
       if (found[0]?.packageId) await pool.execute("UPDATE packages SET status = 'Em andamento' WHERE id = ? AND owner_id = ?", [found[0].packageId, ownerId]);
     } else if (action === "payment.delete") {
       const id = Number(body.id);
-      const found = await rows<(RowDataPacket & { packageId: number })[]>("SELECT package_id AS packageId FROM payments WHERE id = ? AND owner_id = ?", [id, ownerId]);
-      await pool.execute("DELETE FROM payments WHERE id = ? AND owner_id = ?", [id, ownerId]);
-      if (found.length) await refreshPackagePayment(found[0].packageId, ownerId);
+      const found = await rows<(RowDataPacket & { packageId: number | null; paymentKind: string })[]>("SELECT package_id AS packageId, payment_kind AS paymentKind FROM payments WHERE id = ? AND owner_id = ?", [id, ownerId]);
+      if (found[0]?.paymentKind === "standalone") {
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          const [allocations] = await connection.execute<(RowDataPacket & { sessionId: number; amountCents: number })[]>("SELECT session_id AS sessionId, amount_cents AS amountCents FROM payment_allocations WHERE payment_id = ? AND owner_id = ? FOR UPDATE", [id, ownerId]);
+          for (const allocation of allocations) await connection.execute("UPDATE sessions SET standalone_paid_cents = GREATEST(0, standalone_paid_cents - ?) WHERE id = ? AND owner_id = ?", [allocation.amountCents, allocation.sessionId, ownerId]);
+          await connection.execute("DELETE FROM payments WHERE id = ? AND owner_id = ?", [id, ownerId]);
+          await connection.execute("INSERT INTO audit_logs (owner_id, entity_type, entity_id, action, details) VALUES (?, 'payment', ?, 'standalone_deleted', ?)", [ownerId, id, JSON.stringify({ allocations })]);
+          await connection.commit();
+        } catch (error) {
+          await connection.rollback();
+          throw error;
+        } finally {
+          connection.release();
+        }
+      } else {
+        await pool.execute("DELETE FROM payments WHERE id = ? AND owner_id = ?", [id, ownerId]);
+        if (found[0]?.packageId) await refreshPackagePayment(found[0].packageId, ownerId);
+      }
     } else if (action === "appointment.status") {
       const id = Number(body.id); const status = String(body.status || "Agendado");
       await pool.execute("UPDATE appointments SET status = ? WHERE id = ? AND owner_id = ?", [status, id, ownerId]);
