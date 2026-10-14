@@ -244,17 +244,42 @@ export async function POST(request: Request) {
       } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
     } else if (action === "session.update") {
       const id = Number(body.id);
-      const found = await rows<RowDataPacket[]>("SELECT s.package_id AS packageId, s.session_kind AS sessionKind, s.performed_at AS performedAt, s.procedure_type AS procedureType, s.measurement_in AS measurementIn, s.measurement_out AS measurementOut, COALESCE(s.occurrences, '') AS occurrences, s.notes, COALESCE((SELECT SUM(pa.amount_cents) FROM payment_allocations pa WHERE pa.owner_id = s.owner_id AND pa.session_id = s.id), 0) AS allocatedPaymentCents FROM sessions s WHERE s.id = ? AND s.owner_id = ? AND s.voided_at IS NULL LIMIT 1", [id, ownerId]);
+      const found = await rows<RowDataPacket[]>("SELECT s.patient_id AS patientId, s.package_id AS packageId, s.session_kind AS sessionKind, s.performed_at AS performedAt, s.procedure_type AS procedureType, s.measurement_in AS measurementIn, s.measurement_out AS measurementOut, COALESCE(s.occurrences, '') AS occurrences, s.notes, COALESCE((SELECT SUM(pa.amount_cents) FROM payment_allocations pa WHERE pa.owner_id = s.owner_id AND pa.session_id = s.id), 0) AS allocatedPaymentCents FROM sessions s WHERE s.id = ? AND s.owner_id = ? AND s.voided_at IS NULL LIMIT 1", [id, ownerId]);
       if (!found.length) return Response.json({ error: "Sessão não encontrada." }, { status: 404 });
       const courtesy = String(found[0].sessionKind).startsWith("courtesy");
       const standalone = found[0].packageId === null && !courtesy;
+      const packageSession = found[0].packageId !== null && !courtesy;
+      const previousPackageId = packageSession ? Number(found[0].packageId) : null;
+      const targetPackageId = packageSession ? Number(body.packageId || previousPackageId) : null;
       const total = standalone ? Math.round(Number(body.standaloneAmount || 0) * 100) : 0;
       const paid = standalone ? Math.round(Number(body.standalonePaidAmount || 0) * 100) : 0;
       if (standalone && (!Number.isFinite(total) || total < 0 || !Number.isFinite(paid) || paid < 0 || paid > total)) return Response.json({ error: "Confira o valor da sessão e o valor pago." }, { status: 400 });
       if (standalone && paid < Number(found[0].allocatedPaymentCents || 0)) return Response.json({ error: "O valor pago não pode ser menor que os pagamentos já registrados para esta sessão." }, { status: 400 });
+      if (packageSession && (!targetPackageId || !Number.isFinite(targetPackageId))) return Response.json({ error: "Escolha um pacote válido para esta sessão." }, { status: 400 });
       const nextKind = courtesy ? (String(body.courtesyStatus || "pending") === "completed" ? "courtesy_completed" : "courtesy_pending") : String(found[0].sessionKind);
-      await pool.execute("UPDATE sessions SET session_kind = ?, performed_at = ?, procedure_type = ?, measurement_in = ?, measurement_out = ?, occurrences = ?, notes = ?, standalone_amount_cents = IF(session_kind = 'standalone', ?, standalone_amount_cents), standalone_paid_cents = IF(session_kind = 'standalone', ?, standalone_paid_cents), standalone_payment_method = IF(session_kind = 'standalone', ?, standalone_payment_method), standalone_due_date = IF(session_kind = 'standalone', ?, standalone_due_date) WHERE id = ? AND owner_id = ? AND voided_at IS NULL", [nextKind, String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || ""), total, paid, String(body.standalonePaymentMethod || "Não informado"), body.standaloneDueDate ? String(body.standaloneDueDate) : null, id, ownerId]);
-      await logAction(ownerId, "session", id, "updated", JSON.stringify({ before: mapDates(found[0]), courtesyStatus: courtesy ? nextKind : undefined }));
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        if (packageSession && targetPackageId !== previousPackageId) {
+          const [targetRows] = await connection.execute<(RowDataPacket & { patientId: number; totalSessions: number })[]>("SELECT patient_id AS patientId, total_sessions AS totalSessions FROM packages WHERE id = ? AND owner_id = ? FOR UPDATE", [targetPackageId, ownerId]);
+          if (!targetRows.length || Number(targetRows[0].patientId) !== Number(found[0].patientId)) {
+            await connection.rollback();
+            return Response.json({ error: "O pacote de destino não pertence à mesma paciente." }, { status: 400 });
+          }
+          const [countRows] = await connection.execute<(RowDataPacket & { total: number })[]>("SELECT COUNT(*) AS total FROM sessions WHERE package_id = ? AND owner_id = ? AND voided_at IS NULL AND id <> ?", [targetPackageId, ownerId, id]);
+          if (Number(countRows[0].total) >= Number(targetRows[0].totalSessions)) {
+            await connection.rollback();
+            return Response.json({ error: "O pacote de destino já está completo." }, { status: 400 });
+          }
+        }
+        await connection.execute("UPDATE sessions SET package_id = IF(session_kind = 'package', ?, package_id), session_kind = ?, performed_at = ?, procedure_type = ?, measurement_in = ?, measurement_out = ?, occurrences = ?, notes = ?, standalone_amount_cents = IF(session_kind = 'standalone', ?, standalone_amount_cents), standalone_paid_cents = IF(session_kind = 'standalone', ?, standalone_paid_cents), standalone_payment_method = IF(session_kind = 'standalone', ?, standalone_payment_method), standalone_due_date = IF(session_kind = 'standalone', ?, standalone_due_date) WHERE id = ? AND owner_id = ? AND voided_at IS NULL", [targetPackageId, nextKind, String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || ""), total, paid, String(body.standalonePaymentMethod || "Não informado"), body.standaloneDueDate ? String(body.standaloneDueDate) : null, id, ownerId]);
+        if (packageSession && previousPackageId) {
+          await connection.execute(`UPDATE packages pkg SET status = IF((SELECT COUNT(*) FROM sessions s WHERE s.package_id = pkg.id AND s.owner_id = pkg.owner_id AND s.voided_at IS NULL) >= pkg.total_sessions, 'Concluído', 'Em andamento') WHERE pkg.id = ? AND pkg.owner_id = ?`, [previousPackageId, ownerId]);
+          if (targetPackageId !== previousPackageId) await connection.execute(`UPDATE packages pkg SET status = IF((SELECT COUNT(*) FROM sessions s WHERE s.package_id = pkg.id AND s.owner_id = pkg.owner_id AND s.voided_at IS NULL) >= pkg.total_sessions, 'Concluído', 'Em andamento') WHERE pkg.id = ? AND pkg.owner_id = ?`, [targetPackageId, ownerId]);
+        }
+        await connection.commit();
+      } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
+      await logAction(ownerId, "session", id, "updated", JSON.stringify({ before: mapDates(found[0]), courtesyStatus: courtesy ? nextKind : undefined, previousPackageId, targetPackageId }));
     } else if (action === "payment.create") {
       const paymentKind = String(body.paymentKind || "package") === "standalone" ? "standalone" : "package";
       const amountCents = Math.round(Number(body.amount || 0) * 100);
