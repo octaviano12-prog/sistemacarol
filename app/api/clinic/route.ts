@@ -194,7 +194,7 @@ export async function POST(request: Request) {
       const status = found[0].usedSessions >= totalSessions ? "Concluído" : "Em andamento";
       await pool.execute("UPDATE packages SET name = ?, total_sessions = ?, total_amount_cents = ?, payment_method = ?, payment_details = ?, payment_status = ?, purchased_at = ?, payment_due_date = ?, status = ? WHERE id = ? AND owner_id = ?", [name, totalSessions, totalAmountCents, paymentMethod, paymentDetails, paymentStatus, purchasedAt, paymentDueDate, status, id, ownerId]);
     } else if (action === "session.create") {
-      const packageId = Number(body.packageId);
+      const requestedPackageId = Number(body.packageId);
       const requestedKind = String(body.sessionKind || "package");
       const sessionKind = requestedKind === "standalone" ? "standalone" : requestedKind === "courtesy" ? "courtesy_pending" : "package";
       if (sessionKind === "standalone" || sessionKind === "courtesy_pending") {
@@ -207,14 +207,41 @@ export async function POST(request: Request) {
         const [created] = await pool.execute<ResultSetHeader>("INSERT INTO sessions (owner_id, patient_id, package_id, session_kind, standalone_amount_cents, standalone_paid_cents, standalone_payment_method, standalone_due_date, performed_at, procedure_type, measurement_in, measurement_out, occurrences, notes) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, patientId, sessionKind, total, paid, courtesy ? "Cortesia" : String(body.standalonePaymentMethod || "Não informado"), courtesy ? null : body.standaloneDueDate ? String(body.standaloneDueDate) : null, String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || "")]);
         await logAction(ownerId, "session", created.insertId, "created", courtesy ? "Sessão em haver concedida / ainda não realizada" : "Sessão avulsa");
       } else {
-      const packages = await rows<(RowDataPacket & { id: number; patientId: number; totalSessions: number })[]>("SELECT id, patient_id AS patientId, total_sessions AS totalSessions FROM packages WHERE id = ? AND owner_id = ? LIMIT 1", [packageId, ownerId]);
-      if (!packages.length) return Response.json({ error: "Pacote não encontrado." }, { status: 404 });
-      const count = await rows<(RowDataPacket & { total: number })[]>("SELECT COUNT(*) AS total FROM sessions WHERE package_id = ? AND owner_id = ? AND voided_at IS NULL", [packageId, ownerId]);
-      if (count[0].total >= packages[0].totalSessions) return Response.json({ error: "Este pacote não possui sessões disponíveis." }, { status: 400 });
+      const requested = await rows<(RowDataPacket & { patientId: number })[]>("SELECT patient_id AS patientId FROM packages WHERE id = ? AND owner_id = ? LIMIT 1", [requestedPackageId, ownerId]);
+      if (!requested.length) return Response.json({ error: "Pacote não encontrado." }, { status: 404 });
+      const packages = await rows<(RowDataPacket & { id: number; patientId: number; totalSessions: number; usedSessions: number })[]>(`SELECT pkg.id, pkg.patient_id AS patientId, pkg.total_sessions AS totalSessions, COUNT(s.id) AS usedSessions
+        FROM packages pkg
+        LEFT JOIN sessions s ON s.package_id = pkg.id AND s.owner_id = pkg.owner_id AND s.voided_at IS NULL
+        WHERE pkg.owner_id = ? AND pkg.patient_id = ?
+        GROUP BY pkg.id, pkg.patient_id, pkg.total_sessions, pkg.purchased_at
+        HAVING COUNT(s.id) < pkg.total_sessions
+        ORDER BY pkg.purchased_at ASC, pkg.id ASC
+        LIMIT 1`, [ownerId, requested[0].patientId]);
+      if (!packages.length) return Response.json({ error: "Esta paciente não possui pacote com sessões disponíveis." }, { status: 400 });
+      const packageId = Number(packages[0].id);
       const [created] = await pool.execute<ResultSetHeader>("INSERT INTO sessions (owner_id, patient_id, package_id, performed_at, procedure_type, measurement_in, measurement_out, occurrences, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [ownerId, packages[0].patientId, packageId, String(body.performedAt || today()), String(body.procedureType || ""), String(body.measurementIn || ""), String(body.measurementOut || ""), String(body.occurrences || ""), String(body.notes || "")]);
       await logAction(ownerId, "session", created.insertId, "created");
-      if (count[0].total + 1 >= packages[0].totalSessions) await pool.execute("UPDATE packages SET status = 'Concluído' WHERE id = ? AND owner_id = ?", [packageId, ownerId]);
+      if (Number(packages[0].usedSessions) + 1 >= Number(packages[0].totalSessions)) await pool.execute("UPDATE packages SET status = 'Concluído' WHERE id = ? AND owner_id = ?", [packageId, ownerId]);
       }
+    } else if (action === "session.move-to-package") {
+      const id = Number(body.id);
+      const targetPackageId = Number(body.packageId);
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        const [sessionRows] = await connection.execute<(RowDataPacket & { patientId: number; packageId: number | null })[]>("SELECT patient_id AS patientId, package_id AS packageId FROM sessions WHERE id = ? AND owner_id = ? AND voided_at IS NULL FOR UPDATE", [id, ownerId]);
+        if (!sessionRows.length || sessionRows[0].packageId === null) { await connection.rollback(); return Response.json({ error: "Sessão de pacote não encontrada." }, { status: 404 }); }
+        const [packageRows] = await connection.execute<(RowDataPacket & { patientId: number; totalSessions: number })[]>("SELECT patient_id AS patientId, total_sessions AS totalSessions FROM packages WHERE id = ? AND owner_id = ? FOR UPDATE", [targetPackageId, ownerId]);
+        if (!packageRows.length || Number(packageRows[0].patientId) !== Number(sessionRows[0].patientId)) { await connection.rollback(); return Response.json({ error: "O pacote de destino não pertence à mesma paciente." }, { status: 400 }); }
+        const [countRows] = await connection.execute<(RowDataPacket & { total: number })[]>("SELECT COUNT(*) AS total FROM sessions WHERE package_id = ? AND owner_id = ? AND voided_at IS NULL AND id <> ?", [targetPackageId, ownerId, id]);
+        if (Number(countRows[0].total) >= Number(packageRows[0].totalSessions)) { await connection.rollback(); return Response.json({ error: "O pacote de destino já está completo." }, { status: 400 }); }
+        const previousPackageId = Number(sessionRows[0].packageId);
+        await connection.execute("UPDATE sessions SET package_id = ?, session_kind = 'package' WHERE id = ? AND owner_id = ?", [targetPackageId, id, ownerId]);
+        await connection.execute(`UPDATE packages pkg SET status = IF((SELECT COUNT(*) FROM sessions s WHERE s.package_id = pkg.id AND s.owner_id = pkg.owner_id AND s.voided_at IS NULL) >= pkg.total_sessions, 'Concluído', 'Em andamento') WHERE pkg.id = ? AND pkg.owner_id = ?`, [previousPackageId, ownerId]);
+        await connection.execute(`UPDATE packages pkg SET status = IF((SELECT COUNT(*) FROM sessions s WHERE s.package_id = pkg.id AND s.owner_id = pkg.owner_id AND s.voided_at IS NULL) >= pkg.total_sessions, 'Concluído', 'Em andamento') WHERE pkg.id = ? AND pkg.owner_id = ?`, [targetPackageId, ownerId]);
+        await connection.commit();
+        await logAction(ownerId, "session", id, "updated", JSON.stringify({ previousPackageId, targetPackageId, reason: "Correção da ordem sequencial dos ciclos" }));
+      } catch (error) { await connection.rollback(); throw error; } finally { connection.release(); }
     } else if (action === "session.update") {
       const id = Number(body.id);
       const found = await rows<RowDataPacket[]>("SELECT s.package_id AS packageId, s.session_kind AS sessionKind, s.performed_at AS performedAt, s.procedure_type AS procedureType, s.measurement_in AS measurementIn, s.measurement_out AS measurementOut, COALESCE(s.occurrences, '') AS occurrences, s.notes, COALESCE((SELECT SUM(pa.amount_cents) FROM payment_allocations pa WHERE pa.owner_id = s.owner_id AND pa.session_id = s.id), 0) AS allocatedPaymentCents FROM sessions s WHERE s.id = ? AND s.owner_id = ? AND s.voided_at IS NULL LIMIT 1", [id, ownerId]);
